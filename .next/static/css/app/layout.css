@@ -1,7 +1,7 @@
-/*!*********************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************!*\
-  !*** css ./node_modules/.pnpm/next@14.2.16_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!./node_modules/.pnpm/next@14.2.16_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!./app/globals.css ***!
-  \*********************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************/
-/*! tailwindcss v4.1.13 | MIT License | https://tailwindcss.com */
+/*!*************************************************************************************************************************************************************************************************************************************************************!*\
+  !*** css ./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!./app/globals.css ***!
+  \*************************************************************************************************************************************************************************************************************************************************************/
+/*! tailwindcss v4.1.17 | MIT License | https://tailwindcss.com */
 @layer properties;
 @layer theme, base, components, utilities;
 @layer theme {
@@ -1593,28 +1593,28 @@
     transform-origin: bottom;
   }
   .origin-bottom-left {
-    transform-origin: bottom left;
+    transform-origin: 0 100%;
   }
   .origin-bottom-right {
-    transform-origin: bottom right;
+    transform-origin: 100% 100%;
   }
   .origin-center {
     transform-origin: center;
   }
   .origin-left {
-    transform-origin: left;
+    transform-origin: 0;
   }
   .origin-right {
-    transform-origin: right;
+    transform-origin: 100%;
   }
   .origin-top {
     transform-origin: top;
   }
   .origin-top-left {
-    transform-origin: top left;
+    transform-origin: 0 0;
   }
   .origin-top-right {
-    transform-origin: top right;
+    transform-origin: 100% 0;
   }
   .-translate-full {
     --tw-translate-x: -100%;
@@ -4486,28 +4486,28 @@
     perspective-origin: bottom;
   }
   .perspective-origin-bottom-left {
-    perspective-origin: bottom left;
+    perspective-origin: 0 100%;
   }
   .perspective-origin-bottom-right {
-    perspective-origin: bottom right;
+    perspective-origin: 100% 100%;
   }
   .perspective-origin-center {
     perspective-origin: center;
   }
   .perspective-origin-left {
-    perspective-origin: left;
+    perspective-origin: 0;
   }
   .perspective-origin-right {
-    perspective-origin: right;
+    perspective-origin: 100%;
   }
   .perspective-origin-top {
     perspective-origin: top;
   }
   .perspective-origin-top-left {
-    perspective-origin: top left;
+    perspective-origin: 0 0;
   }
   .perspective-origin-top-right {
-    perspective-origin: top right;
+    perspective-origin: 100% 0;
   }
   .ring-inset {
     --tw-ring-inset: inset;
@@ -9185,9 +9185,9 @@ html {
   }
 }
 
-/*!****************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************!*\
-  !*** css ./node_modules/.pnpm/next@14.2.16_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[2].use[1]!./node_modules/.pnpm/next@14.2.16_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/next-font-loader/index.js??ruleSet[1].rules[14].oneOf[2].use[2]!./node_modules/.pnpm/next@14.2.16_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/font/google/target.css?{"path":"app/layout.tsx","import":"Inter","arguments":[{"subsets":["latin"]}],"variableName":"inter"} ***!
-  \****************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************/
+/*!****************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************!*\
+  !*** css ./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[2].use[1]!./node_modules/next/dist/build/webpack/loaders/next-font-loader/index.js??ruleSet[1].rules[14].oneOf[2].use[2]!./node_modules/next/font/google/target.css?{"path":"app/layout.tsx","import":"Inter","arguments":[{"subsets":["latin"]}],"variableName":"inter"} ***!
+  \****************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************/
 /* cyrillic-ext */
 @font-face {
   font-family: '__Inter_f367f3';
