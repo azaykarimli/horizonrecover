@@ -3,18 +3,22 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 import { getMongoClient, getDbName } from '@/lib/db'
 import { ObjectId } from 'mongodb'
+import { requireSession, canManageUpload } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
 /**
  * PUT /api/emp/edit-row/[uploadId]/[rowIndex]
  * Edit a single row in an upload
+ * Only Super Owner or Owner (if draft) can edit rows
  */
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ uploadId: string; rowIndex: string }> }
 ) {
   try {
+    const session = await requireSession()
+
     const { uploadId, rowIndex } = await params
     const idx = parseInt(rowIndex, 10)
 
@@ -36,6 +40,10 @@ export async function PUT(
     const upload = await uploads.findOne({ _id: new ObjectId(uploadId) })
     if (!upload) {
       return NextResponse.json({ error: 'Upload not found' }, { status: 404 })
+    }
+
+    if (!canManageUpload(session, upload)) {
+      return NextResponse.json({ error: 'Forbidden: Cannot edit rows in this upload' }, { status: 403 })
     }
 
     const records = (upload as any).records || []

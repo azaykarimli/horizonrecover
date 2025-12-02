@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { ObjectId } from 'mongodb'
 import { getMongoClient, getDbName } from '@/lib/db'
 import { voidTransaction } from '@/lib/emerchantpay-void'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -10,9 +11,12 @@ export const runtime = 'nodejs'
  * 
  * Voids all approved transactions in an upload
  * This cancels transactions before they are finalized
+ * Only Super Owner can void transactions
  */
 export async function POST(_req: Request, ctx: { params: { id: string } }) {
   try {
+    await requireWriteAccess()
+    
     const { id } = ctx.params
 
     const client = await getMongoClient()

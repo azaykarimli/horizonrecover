@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { ObjectId } from 'mongodb'
 import { getMongoClient, getDbName } from '@/lib/db'
-import { mapRecordToSddSale, type FieldMapping, stripRetrySuffix, buildRetryTransactionId } from '@/lib/emp'
+import { mapRecordToSddSale, type FieldMapping, stripRetrySuffix, buildRetryTransactionId, type CompanyConfig } from '@/lib/emp'
 import { submitSddSale, maskIban, type SddSaleResponse } from '@/lib/emerchantpay'
 import { reconcileTransaction } from '@/lib/emerchantpay-reconcile'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -29,6 +30,8 @@ function isDuplicateTransactionError(res?: SddSaleResponse | null, err?: any): b
 
 export async function POST(req: Request, ctx: { params: { id: string } }) {
   try {
+    await requireWriteAccess()
+
     const { id } = ctx.params
     const body = await req.json().catch(() => ({})) as { dryRun?: boolean; selection?: number[] }
     const dryRun = !!body?.dryRun
@@ -38,13 +41,29 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     const db = client.db(getDbName())
     const uploads = db.collection('uploads')
     const settings = db.collection('settings')
-    
+    const accounts = db.collection('accounts')
+
     const doc = await uploads.findOne({ _id: new ObjectId(id) }) as any
     if (!doc) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    
+
     // Load field mapping
-    const settingsDoc = await settings.findOne({ _id: 'field-mapping' } as any)
+    const settingsDoc = await settings.findOne({ _id: 'field-mapping' as any })
     const customMapping = settingsDoc?.mapping as FieldMapping | null
+
+    // Fetch account settings if assigned
+    let companyConfig: CompanyConfig | null = null
+    if (doc.accountId) {
+      const account = await accounts.findOne({ _id: new ObjectId(doc.accountId) }) as any
+      if (account) {
+        companyConfig = {
+          name: account.name,
+          contactEmail: account.contactEmail,
+          returnUrls: account.returnUrls,
+          dynamicDescriptor: account.dynamicDescriptor,
+          fallbackDescription: account.fallbackDescription,
+        }
+      }
+    }
 
     const records: Record<string, string>[] = doc.records || []
     if (!Array.isArray(records) || records.length === 0) {
@@ -75,7 +94,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
       const record = records[i]
       let request
       try {
-        request = mapRecordToSddSale(record, i, customMapping, doc.originalFilename || doc.filename)
+        request = mapRecordToSddSale(record, i, customMapping, doc.originalFilename || doc.filename, companyConfig)
       } catch (validationError: any) {
         rows[i].status = 'error'
         rows[i].emp = { message: validationError?.message || 'Validation failed' }
@@ -124,7 +143,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
         if (dryRun) {
           try {
             console.info('[EMP] dry-run row', { i, transactionId: currentRequest.transactionId, amountMinor: currentRequest.amountMinor, currency: currentRequest.currency, iban: maskIban(currentRequest.iban) })
-          } catch {}
+          } catch { }
           submitted++
           results.push({ i, dryRun: true, transactionId: currentRequest.transactionId })
           return runNext()
@@ -193,7 +212,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
               nextTransactionId: buildRetryTransactionId(baseTransactionId, retryCount),
               duplicateAttempts,
             })
-          } catch {}
+          } catch { }
 
           if (duplicateAttempts > maxDuplicateRetries) {
             const message = finalResponse?.message || finalError?.message || 'Duplicate transaction_id after retries'

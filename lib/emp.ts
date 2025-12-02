@@ -1,3 +1,5 @@
+import { SddSaleRequest } from '@/lib/emerchantpay'
+
 type EmpRecord = Record<string, string>
 
 export type CompanyConfig = {
@@ -14,54 +16,7 @@ export type CompanyConfig = {
     merchantName?: string
     merchantUrl?: string
   }
-}
-
-/**
- * Detect company based on filename and return company-specific configuration
- * @param filename - The upload filename (e.g., "bestwin_import.csv")
- * @returns Company configuration or null for default (MeLinux)
- */
-export function detectCompanyFromFilename(filename: string): CompanyConfig | null {
-  const lowerFilename = (filename || '').toLowerCase()
-  
-  if (lowerFilename.includes('bestwin')) {
-    return {
-      name: 'BestWin',
-      contactEmail: 'Info@bestwin.team',
-      returnUrls: {
-        baseUrl: 'https://bestwin.team',
-        successPath: '/success',
-        failurePath: '/failure',
-        pendingPath: '/pending',
-        cancelPath: '/cancel',
-      },
-      dynamicDescriptor: {
-        merchantName: 'bestwin',
-        merchantUrl: 'https://bestwin.team',
-      },
-    }
-  }
-  
-  if (lowerFilename.includes('grandluck') || lowerFilename.includes('grand-luck') || lowerFilename.includes('grand_luck')) {
-    return {
-      name: 'Grand Luck',
-      contactEmail: 'info@grand-luck-service.com',
-      returnUrls: {
-        baseUrl: 'https://www.grand-luck-service.com',
-        successPath: '/success',
-        failurePath: '/failure',
-        pendingPath: '/pending',
-        cancelPath: '/cancel',
-      },
-      dynamicDescriptor: {
-        merchantName: 'Grand Luck Service',
-        merchantUrl: 'https://www.grand-luck-service.com',
-      },
-    }
-  }
-  
-  // Default: MeLinux (return null to use env defaults)
-  return null
+  fallbackDescription?: string
 }
 
 export function parseEmpCsv(csvText: string): EmpRecord[] {
@@ -72,35 +27,35 @@ export function parseEmpCsv(csvText: string): EmpRecord[] {
 
   // Remove BOM if present
   let text = csvText.charCodeAt(0) === 0xFEFF ? csvText.substring(1) : csvText
-  
+
   // Normalize line endings
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const lines = normalized.split('\n').filter((l) => l.trim().length > 0)
-  
+
   if (lines.length === 0) {
     throw new Error('CSV file is empty or contains no valid lines')
   }
-  
+
   if (lines.length === 1) {
     throw new Error('CSV file only contains headers, no data rows found')
   }
-  
+
   // Detect delimiter from first line
   const delimiter = detectDelimiter(lines[0])
   const rawHeaders = splitCsvLine(lines[0], delimiter)
-  
+
   if (rawHeaders.length === 0) {
     throw new Error('No columns detected in CSV header')
   }
-  
+
   // Handle empty headers by naming them uniquely, and deduplicate any repeated headers
   const headers: string[] = []
   const headerCounts = new Map<string, number>()
-  
+
   for (let idx = 0; idx < rawHeaders.length; idx++) {
     const trimmed = rawHeaders[idx].trim()
     let headerName = trimmed || `_empty_${idx}`
-    
+
     // If this header name already exists (and it's not an empty column), make it unique
     if (!headerName.startsWith('_empty_') && headerCounts.has(headerName)) {
       const count = headerCounts.get(headerName)! + 1
@@ -110,28 +65,28 @@ export function parseEmpCsv(csvText: string): EmpRecord[] {
     } else if (!headerName.startsWith('_empty_')) {
       headerCounts.set(headerName, 1)
     }
-    
+
     headers.push(headerName)
   }
-  
+
   const records: EmpRecord[] = []
   const errorRows: number[] = []
-  
+
   for (let i = 1; i < lines.length; i++) {
     try {
       const line = lines[i]
       if (!line || line.trim().length === 0) continue
-      
+
       const cells = splitCsvLine(line, delimiter)
       const obj: EmpRecord = {}
-      
+
       for (let j = 0; j < headers.length; j++) {
         // Skip empty header columns
         if (!headers[j].startsWith('_empty_')) {
           obj[headers[j]] = cells[j] ?? ''
         }
       }
-      
+
       // Only add if the record has at least one non-empty value
       const hasData = Object.values(obj).some(v => v && v.trim().length > 0)
       if (hasData) {
@@ -142,19 +97,19 @@ export function parseEmpCsv(csvText: string): EmpRecord[] {
       errorRows.push(i + 1)
     }
   }
-  
+
   if (errorRows.length > 0 && errorRows.length === lines.length - 1) {
     throw new Error(`Failed to parse any rows. Errors on rows: ${errorRows.slice(0, 5).join(', ')}${errorRows.length > 5 ? '...' : ''}`)
   }
-  
+
   if (records.length === 0) {
     throw new Error('No valid data rows found in CSV (all rows may be empty)')
   }
-  
+
   if (errorRows.length > 0) {
     console.warn(`[CSV Parser] ${errorRows.length} rows had parsing errors and were skipped`)
   }
-  
+
   console.log(`[CSV Parser] Successfully parsed ${records.length} records`)
   return records
 }
@@ -162,17 +117,17 @@ export function parseEmpCsv(csvText: string): EmpRecord[] {
 function detectDelimiter(headerLine: string): ',' | ';' {
   const commas = (headerLine.match(/,/g) || []).length
   const semicolons = (headerLine.match(/;/g) || []).length
-  
+
   // Debug log
   try {
-    console.log('[CSV Parser] Delimiter detection:', { 
+    console.log('[CSV Parser] Delimiter detection:', {
       headerPreview: headerLine.substring(0, 100),
-      commas, 
+      commas,
       semicolons,
       charCodes: headerLine.substring(0, 50).split('').map(c => c.charCodeAt(0)).join(',')
     })
-  } catch {}
-  
+  } catch { }
+
   return semicolons > commas ? ';' : ','
 }
 
@@ -180,7 +135,7 @@ function splitCsvLine(line: string, delimiter: ',' | ';'): string[] {
   const result: string[] = []
   let current = ''
   let inQuotes = false
-  
+
   for (let i = 0; i < line.length; i++) {
     const char = line[i]
     if (char === '"') {
@@ -198,18 +153,18 @@ function splitCsvLine(line: string, delimiter: ',' | ';'): string[] {
     }
   }
   result.push(current)
-  
+
   const trimmed = result.map((s) => s.trim())
-  
+
   // Fallback: if we only got 1 field but there are delimiters, the quote logic failed
   // Just do a simple split
   if (trimmed.length === 1 && line.includes(delimiter)) {
     try {
       console.log('[CSV Parser] Quote-aware parsing failed, using simple split')
-    } catch {}
+    } catch { }
     return line.split(delimiter).map(s => s.trim())
   }
-  
+
   return trimmed
 }
 
@@ -306,134 +261,88 @@ function splitFullName(fullNameRaw: string): { firstName: string; lastName: stri
 }
 
 export function mapRecordToSddSale(
-  record: EmpRecord, 
-  index: number, 
+  record: Record<string, string>,
+  rowIndex: number,
   customMapping?: FieldMapping | null,
-  filename?: string
-) {
-  const mapping = mergeMappingDefaults(customMapping)
-  const lowerKeyToValue: Record<string, string> = {}
-  for (const [k, v] of Object.entries(record)) lowerKeyToValue[k.toLowerCase()] = v ?? ''
-
-  const get = (...names: string[]) => {
-    for (const n of names) {
-      const v = lowerKeyToValue[n.toLowerCase()]
-      if (v != null && v !== '') return v
+  filename?: string,
+  companyConfig?: CompanyConfig | null
+): SddSaleRequest {
+  const getField = (fields: string[]): string => {
+    for (const field of fields) {
+      if (record[field]) return record[field].trim()
+      // Try case-insensitive match
+      const key = Object.keys(record).find(k => k.toLowerCase() === field.toLowerCase())
+      if (key && record[key]) return record[key].trim()
     }
     return ''
   }
 
-  const rawAmount = get(...mapping.amount)
-  const numericAmount = rawAmount
-    .replace(/[\s€$]/g, '')
-  let normalizedAmount = numericAmount
-  if (numericAmount.includes(',') && numericAmount.includes('.')) {
-    normalizedAmount = numericAmount.replace(/\./g, '').replace(',', '.')
-  } else if (numericAmount.includes(',')) {
-    normalizedAmount = numericAmount.replace(',', '.')
-  }
-  normalizedAmount = normalizedAmount.replace(/[^0-9.-]/g, '')
-  const amountFloat = parseFloat(normalizedAmount || '0')
-  if (!normalizedAmount || isNaN(amountFloat) || amountFloat <= 0) {
-    // Debug: show available keys and what we searched for
-    const availableKeys = Object.keys(record).join(', ')
-    const searchedFor = mapping.amount.join(', ')
-    throw new Error(`Invalid amount at row ${index}: "${rawAmount}" (must be a positive number). Searched for: [${searchedFor}]. Available fields: [${availableKeys}]`)
-  }
-  const amountMinor = Math.round(amountFloat * 100)
-  
-  const currency = get(...mapping.currency) || 'EUR'
-  const usage = get(...mapping.usage)
-  let firstName = get(...mapping.firstName)
-  let lastName = get(...mapping.lastName)
-  let address1 = get(...mapping.address1)
-  const zipCode = get(...mapping.zipCode)
-  const city = get(...mapping.city)
-  const country = (get(...mapping.country) || 'DE').toUpperCase()
-  const customerEmail = get(...mapping.email)
-  const iban = get(...mapping.iban)
+  const mapping = mergeMappingDefaults(customMapping)
 
-  if (!address1) {
-    const street = lowerKeyToValue['strasse'] || lowerKeyToValue['straße'] || ''
-    const houseNumber = lowerKeyToValue['nr'] || ''
-    const addition = lowerKeyToValue['adresszusatz'] || ''
-    const combined = [street, houseNumber].filter(Boolean).join(' ').trim()
-    address1 = combined || addition
+  const amountStr = getField(mapping.amount)
+  const amount = Math.round(parseFloat(amountStr.replace(',', '.')) * 100)
+
+  if (isNaN(amount) || amount <= 0) {
+    throw new Error(`Invalid amount at row ${rowIndex + 1}: ${amountStr}`)
   }
 
-  const fullNameFallback = ['customername', 'customer_name', 'name', 'qc_name']
-    .map((k) => lowerKeyToValue[k])
-    .find((v) => v && v.trim().length > 0)
+  const currency = getField(mapping.currency) || 'EUR'
 
-  if ((!firstName || !lastName) && fullNameFallback) {
-    const derived = splitFullName(fullNameFallback)
-    if (!firstName) firstName = derived.firstName
-    if (!lastName) lastName = derived.lastName
+  // Usage/Description logic with fallback
+  let usage = getField(mapping.usage)
+  if (!usage && companyConfig?.fallbackDescription) {
+    usage = companyConfig.fallbackDescription
   }
 
-  firstName = (firstName || '').trim()
-  lastName = (lastName || '').trim()
-
-  if (!firstName) {
-    const searchedFor = mapping.firstName.join(', ')
-    throw new Error(`Missing first name at row ${index}. Ensure one of [${searchedFor}] or a customer name column is populated.`)
+  if (!usage) {
+    throw new Error(`Missing usage/description at row ${rowIndex + 1}`)
   }
 
-  if (!lastName) {
-    const searchedFor = mapping.lastName.join(', ')
-    throw new Error(`Missing last name at row ${index}. Ensure one of [${searchedFor}] or a customer name column is populated.`)
-  }
-  
-  if (!iban || iban.length < 15) {
-    throw new Error(`Invalid IBAN at row ${index}: "${iban}" (must be at least 15 characters)`)
-  }
-  
-  const defaultRemoteIp = process.env.EMP_DEFAULT_REMOTE_IP || '8.8.8.8'
-  const remoteIp = get(...mapping.remoteIp) || defaultRemoteIp
-  const shopperId = get(...mapping.shopperId)
-  const dueDate = get(...mapping.dueDate)
+  let firstName = getField(mapping.firstName)
+  let lastName = getField(mapping.lastName)
 
-  // Extract product descriptor for dynamic descriptor params
-  const productDescriptor = get(...mapping.productDescriptor)
-
-  const transactionId = buildTransactionId(shopperId, dueDate, index)
-
-  // Detect company from filename
-  const companyConfig = filename ? detectCompanyFromFilename(filename) : null
-
-  // Build dynamic descriptor params
-  // Priority: CSV product descriptor > Company default > undefined
-  let dynamicDescriptorParams: any = undefined
-  if (productDescriptor || companyConfig?.dynamicDescriptor) {
-    dynamicDescriptorParams = {
-      // Use product descriptor from CSV if available, otherwise use company default
-      merchantName: productDescriptor 
-        ? productDescriptor.substring(0, 25) 
-        : companyConfig?.dynamicDescriptor?.merchantName?.substring(0, 25),
-      // Use company's merchant URL if available
-      merchantUrl: companyConfig?.dynamicDescriptor?.merchantUrl?.substring(0, 60),
+  // Fallback: Try to parse from single name field if specific fields are missing
+  if (!firstName || !lastName) {
+    const nameField = ['customername', 'name', 'Name', 'CustomerName'].find(f => record[f] || Object.keys(record).find(k => k.toLowerCase() === f.toLowerCase()))
+    if (nameField) {
+      const fullName = getField([nameField])
+      if (fullName) {
+        const parts = splitFullName(fullName)
+        if (!firstName) firstName = parts.firstName
+        if (!lastName) lastName = parts.lastName
+      }
     }
   }
 
-  // Build custom return URLs if company config exists
-  const customReturnUrls = companyConfig ? companyConfig.returnUrls : undefined
+  if (!firstName || !lastName) {
+    throw new Error(`Missing customer name at row ${rowIndex + 1}`)
+  }
+
+  const iban = getField(mapping.iban).replace(/\s/g, '')
+  if (!iban) {
+    throw new Error(`Missing IBAN at row ${rowIndex + 1}`)
+  }
+
+  // Use provided config
+  const config = companyConfig
+
+  const transactionId = `txn_${Date.now()}_${rowIndex}_${Math.random().toString(36).substring(7)}`
 
   return {
     transactionId,
-    amountMinor,
-    currency,
     usage,
+    remoteIp: getField(mapping.remoteIp) || '127.0.0.1',
+    amountMinor: amount,
+    currency,
     firstName,
     lastName,
-    address1,
-    zipCode,
-    city,
-    country,
-    customerEmail, // Use email from CSV only, no override
+    address1: getField(mapping.address1) || 'Unknown Street',
+    zipCode: getField(mapping.zipCode) || '00000',
+    city: getField(mapping.city) || 'Unknown City',
+    country: getField(mapping.country) || 'DE',
     iban,
-    remoteIp,
-    dynamicDescriptorParams,
-    customReturnUrls,
+    dynamicDescriptorParams: config?.dynamicDescriptor,
+    customReturnUrls: config?.returnUrls,
   }
 }
 
@@ -441,15 +350,15 @@ function buildTransactionId(shopperId: string, dueDate: string, index: number): 
   // Create a unique transaction ID with timestamp component
   const now = new Date()
   const timestamp = Date.now().toString(36) // Base-36 timestamp for shorter ID
-  
+
   // Add random component for extra uniqueness (prevents duplicates when uploading same file multiple times)
   const random = Math.random().toString(36).substring(2, 6) // 4 random chars
-  
+
   const sanitizedShopperId = (shopperId || 'shp').replace(/[^0-9A-Za-z]/g, '').slice(0, 20)
-  
+
   // Use current date instead of CSV due date for better uniqueness
   const currentDate = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
-  
+
   const components = [
     sanitizedShopperId,
     currentDate, // Current date: YYYYMMDD format
@@ -457,9 +366,9 @@ function buildTransactionId(shopperId: string, dueDate: string, index: number): 
     random, // Random component for uniqueness
     index.toString().padStart(4, '0') // Pad index for consistent sorting (reduced to 4 digits to save space)
   ].filter(Boolean)
-  
+
   const fullId = components.join('-')
-  
+
   // Ensure ID is within limits (max 50 chars for most payment processors)
   return fullId.slice(0, 50) || `txn-${timestamp}-${random}-${index}`
 }

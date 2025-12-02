@@ -1,26 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireWriteAccess } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
 
 // Helper to build basic auth header
 function getAuthHeader() {
   const username = process.env.EMP_GENESIS_USERNAME
   const password = process.env.EMP_GENESIS_PASSWORD
-  
+
   if (!username || !password) {
     throw new Error('EMP credentials not configured')
   }
-  
+
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
 }
 
 // Helper to get the reporting endpoint
 function getReportingEndpoint() {
   let endpoint = process.env.EMP_GENESIS_ENDPOINT || 'https://staging.gate.emerchantpay.net'
-  
+
   // Ensure the endpoint has a protocol
   if (!/^https?:\/\//i.test(endpoint)) {
     endpoint = 'https://' + endpoint.replace(/^\/\//, '')
   }
-  
+
   // Use the base URL without /process/{token} for reporting APIs
   return endpoint.replace(/\/process.*$/, '')
 }
@@ -42,12 +45,12 @@ function parseResponsesAttr(xml: string, root: 'payment_responses' | 'chargeback
 // Helper to parse payment responses from reconcile API
 function parsePaymentResponsesXML(xml: string): any[] {
   const transactions: any[] = []
-  
+
   // Match all payment_response blocks (from reconcile API)
   const transactionBlocks = xml.match(/<payment_response>[\s\S]*?<\/payment_response>/g) || []
-  
+
   console.log(`[Analytics] Found ${transactionBlocks.length} payment_response blocks in XML`)
-  
+
   for (const block of transactionBlocks) {
     const transaction = {
       uniqueId: parseXMLValue(block, 'unique_id'),
@@ -66,13 +69,13 @@ function parsePaymentResponsesXML(xml: string): any[] {
       cardNumber: parseXMLValue(block, 'card_number') || parseXMLValue(block, 'bank_account_number') || '',
     }
     transactions.push(transaction)
-    
+
     // Log first few transactions for debugging
     if (transactions.length <= 3) {
       console.log(`[Analytics] Transaction ${transactions.length} parsed:`, transaction)
     }
   }
-  
+
   return transactions
 }
 
@@ -82,17 +85,17 @@ export async function fetchReconcileTransactions(startDate: string, endDate: str
   if (!terminalToken) {
     throw new Error('Terminal token not configured')
   }
-  
+
   const endpoint = getReportingEndpoint()
   const reconcileUrl = `${endpoint}/reconcile/by_date/${terminalToken}`
-  
+
   console.log('[Analytics] Fetching from reconcile endpoint:', reconcileUrl)
   console.log('[Analytics] Date range:', startDate, 'to', endDate)
-  
+
   const allTransactions: any[] = []
   let page = 1
   let totalPages = 1
-  
+
   // Fetch all pages
   while (page <= totalPages) {
     // Build XML request for reconcile API (max 500 per page)
@@ -103,9 +106,9 @@ export async function fetchReconcileTransactions(startDate: string, endDate: str
   <per_page>500</per_page>
   <page>${page}</page>
 </reconcile>`
-    
+
     console.log(`[Analytics] Fetching page ${page}...`)
-    
+
     const response = await fetch(reconcileUrl, {
       method: 'POST',
       headers: {
@@ -114,31 +117,31 @@ export async function fetchReconcileTransactions(startDate: string, endDate: str
       },
       body: xmlRequest,
     })
-    
+
     const xmlResponse = await response.text()
-    
+
     if (page === 1) {
       console.log(`[Analytics] First response preview:`, xmlResponse.substring(0, 800))
     }
-    
+
     if (!response.ok) {
       console.error(`[Analytics] Error response:`, xmlResponse)
       throw new Error(`Failed to fetch transactions from reconcile API: ${xmlResponse}`)
     }
-    
+
     // Parse pagination info from payment_responses attributes
     const totalCount = parseResponsesAttr(xmlResponse, 'payment_responses', 'total_count') || 0
     const pagesCount = parseResponsesAttr(xmlResponse, 'payment_responses', 'pages_count') || 0
     const perPage = parseResponsesAttr(xmlResponse, 'payment_responses', 'per_page') || 100
-    
+
     console.log(`[Analytics] Page ${page}/${pagesCount}, Total count: ${totalCount}, Per page: ${perPage}`)
-    
+
     // Parse the XML response (payment_response blocks)
     const transactions = parsePaymentResponsesXML(xmlResponse)
     allTransactions.push(...transactions)
-    
+
     console.log(`[Analytics] Parsed ${transactions.length} transactions from page ${page}`)
-    
+
     // Continue fetching until all pages are retrieved
     if (page < pagesCount) {
       page++
@@ -147,19 +150,22 @@ export async function fetchReconcileTransactions(startDate: string, endDate: str
       break
     }
   }
-  
+
   console.log(`[Analytics] Total fetched: ${allTransactions.length} transactions`)
   return allTransactions
 }
 
 export async function GET(request: NextRequest) {
   try {
+    // Direct API access requires Super Owner - organization filtering only works on cache
+    await requireWriteAccess()
+
     const searchParams = request.nextUrl.searchParams
     const startDate = searchParams.get('start_date') || getDefaultStartDate()
     const endDate = searchParams.get('end_date') || getDefaultEndDate()
-    
+
     const transactions = await fetchReconcileTransactions(startDate, endDate)
-    
+
     return NextResponse.json({
       success: true,
       transactions,
@@ -167,7 +173,7 @@ export async function GET(request: NextRequest) {
       startDate,
       endDate,
     })
-    
+
   } catch (error: any) {
     console.error('[Analytics] Error fetching transactions:', error)
     return NextResponse.json(

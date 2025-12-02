@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { voidTransaction } from '@/lib/emerchantpay-void'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -7,9 +8,12 @@ export const runtime = 'nodejs'
  * POST /api/emp/void-manual
  * 
  * Manually void a single transaction by unique_id
+ * Only Super Owner can void transactions
  */
 export async function POST(req: Request) {
   try {
+    await requireWriteAccess()
+    
     const body = await req.json()
     const { uniqueId, transactionId } = body
 

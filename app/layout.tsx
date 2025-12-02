@@ -7,6 +7,11 @@ import { SiteChrome, SiteFooter } from "@/components/site-chrome"
 
 const inter = Inter({ subsets: ["latin"] })
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+}
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://melinux.net"),
   title: {
@@ -44,10 +49,6 @@ export const metadata: Metadata = {
   robots: {
     index: true,
     follow: true,
-  },
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
   },
   icons: {
     icon: [

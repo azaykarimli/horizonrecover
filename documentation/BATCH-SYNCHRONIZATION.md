@@ -646,33 +646,94 @@ await uploadsCollection.updateOne(
 
 ## Scheduling & Automation
 
-### Cron Jobs (Recommended)
+### Vercel Cron Jobs (Implemented)
 
-Set up scheduled tasks for automatic synchronization:
+The platform uses Vercel cron jobs for automatic data synchronization.
+
+#### Analytics Refresh Cron (Every 2 Hours)
+
+**Endpoint**: `/api/cron/refresh-analytics`  
+**Schedule**: `0 */2 * * *` (every 2 hours at minute 0)  
+**Action**: Same as clicking "Refresh Data" button on analytics dashboard
 
 ```typescript
-// In vercel.json or similar
+// vercel.json
 {
   "crons": [
     {
-      "path": "/api/emp/analytics/batch-sync",
-      "schedule": "0 */6 * * *" // Every 6 hours
-    },
-    {
-      "path": "/api/emp/analytics/chargebacks",
-      "schedule": "0 0 * * *" // Daily at midnight
+      "path": "/api/cron/refresh-analytics",
+      "schedule": "0 */2 * * *"
     }
   ]
 }
 ```
 
+**What it does**:
+1. Calculates date range (last 30 days to +30 days future)
+2. Fetches all transactions from emerchantpay reconcile API
+3. Clears and updates `emp_reconcile_transactions` cache
+4. Fetches all chargebacks from emerchantpay chargebacks API
+5. Clears and updates `emp_chargebacks` cache
+6. Logs results and timing
+
+**Security**: The cron endpoint verifies the `CRON_SECRET` environment variable:
+
+```typescript
+// Verify Vercel cron request
+const authHeader = request.headers.get('authorization')
+const cronSecret = process.env.CRON_SECRET
+
+if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+}
+```
+
+**Environment Setup**:
+```bash
+# .env.local
+CRON_SECRET=your_cron_secret_here  # Generate with: openssl rand -base64 32
+```
+
+**Vercel Dashboard Configuration**:
+1. Go to Vercel Dashboard → Settings → Environment Variables
+2. Add `CRON_SECRET` with a secure random value
+3. Cron jobs automatically use this for authentication
+
 ### Manual Triggers
 
 Users can manually trigger sync operations:
 
-1. **Sync Batch** - Button in analytics dashboard
-2. **Refresh Stats** - Button in upload detail page
-3. **Re-run Chargeback Detection** - API endpoint
+1. **Refresh Data** - Button in analytics dashboard (syncs transactions + chargebacks)
+2. **Sync Batch** - Button in batch analysis page
+3. **Refresh Stats** - Button in upload detail page
+4. **Re-run Chargeback Detection** - API endpoint
+
+### Cron Job Response
+
+```typescript
+// Successful response
+{
+  success: true,
+  message: 'Analytics refresh completed',
+  dateRange: {
+    startDate: '2025-10-28',
+    endDate: '2025-12-27'
+  },
+  results: {
+    transactions: { success: true, fetched: 5033, error: null },
+    chargebacks: { success: true, fetched: 435, error: null }
+  },
+  duration: '12345ms',
+  timestamp: '2025-11-27T10:00:00.000Z'
+}
+```
+
+### Monitoring Cron Execution
+
+Check Vercel dashboard for cron execution logs:
+1. Go to Vercel Dashboard → Deployments → Functions
+2. Filter by `/api/cron/refresh-analytics`
+3. View execution logs and timing
 
 ---
 

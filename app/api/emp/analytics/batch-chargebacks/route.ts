@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getMongoClient, getDbName } from '@/lib/db'
+import { requireSession } from '@/lib/auth'
+import { requiresOrganizationFilter } from '@/lib/analytics-helpers'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -29,20 +31,61 @@ interface BatchChargebackAnalysis {
 }
 
 /**
+ * Build organization filter for uploads based on user role
+ * STRICT: Only show uploads explicitly assigned to the user's organization
+ */
+function buildUploadsOrgFilter(session: any): any {
+  if (session.role === 'superOwner') {
+    return {} // No filter for Super Owner
+  }
+
+  if (session.role === 'agencyAdmin' || session.role === 'agencyViewer') {
+    if (!session.agencyId) {
+      console.warn(`[Batch Chargebacks] Agency role without agencyId - returning empty filter`)
+      return { _id: { $exists: false } }
+    }
+    // STRICT: Only show uploads explicitly assigned to this agency
+    return { agencyId: session.agencyId }
+  }
+
+  if (session.role === 'accountAdmin' || session.role === 'accountViewer') {
+    if (!session.accountId) {
+      console.warn(`[Batch Chargebacks] Account role without accountId - returning empty filter`)
+      return { _id: { $exists: false } }
+    }
+    // STRICT: Only show uploads explicitly assigned to this account
+    return { accountId: session.accountId }
+  }
+
+  // Default: match nothing for unknown roles
+  return { _id: { $exists: false } }
+}
+
+/**
  * GET /api/emp/analytics/batch-chargebacks
  * 
  * Analyzes chargebacks by batch upload
  * Links chargebacks (from emp_chargebacks collection) to uploads (via uniqueId)
+ * Filtered by organization for non-Super Owner users
  */
 export async function GET(req: Request) {
   try {
+    const session = await requireSession()
+    const startTime = Date.now()
+
     const client = await getMongoClient()
     const db = client.db(getDbName())
-    
-    // Fetch all uploads with their rows (we need baseTransactionId)
+
+    // Build organization filter for uploads
+    const orgFilter = buildUploadsOrgFilter(session)
+
+    console.log(`[Batch Chargebacks HYBRID] Starting for ${session.role}`)
+
     const uploadsCollection = db.collection('uploads')
+
+    // Step 1: Fetch uploads with minimal projection (FAST - no unwinding)
     const uploads = await uploadsCollection
-      .find({}, {
+      .find(orgFilter, {
         projection: {
           _id: 1,
           filename: 1,
@@ -50,141 +93,205 @@ export async function GET(req: Request) {
           createdAt: 1,
           recordCount: 1,
           approvedCount: 1,
-          rows: 1, // Need rows to get baseTransactionId
+          'rows.baseTransactionId': 1,
+          partNumber: 1
         }
       })
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, partNumber: 1 })
       .toArray()
 
-    console.log(`[Batch Chargebacks] Found ${uploads.length} uploads`)
+    const fetchTime = Date.now() - startTime
+    console.log(`[Batch Chargebacks HYBRID] Fetched ${uploads.length} uploads in ${fetchTime}ms`)
 
-    // Fetch all chargebacks from cache
-    const chargebacksCollection = db.collection('emp_chargebacks')
-    const allChargebacks = await chargebacksCollection.find({}).toArray()
-    
-    console.log(`[Batch Chargebacks] Found ${allChargebacks.length} chargebacks`)
-    
-    // Debug: log first chargeback structure
-    if (allChargebacks.length > 0) {
-      console.log(`[Batch Chargebacks] Sample chargeback:`, JSON.stringify(allChargebacks[0], null, 2))
+    // Step 2: Extract transaction IDs (FAST - simple loop)
+    const allTransactionIds = new Set<string>()
+    const uploadTransactionMap = new Map<string, Set<string>>()
+
+    for (const upload of uploads) {
+      const uploadId = upload._id.toString()
+      const txIds = new Set<string>()
+
+      if (upload.rows && Array.isArray(upload.rows)) {
+        for (const row of upload.rows) {
+          if (row.baseTransactionId) {
+            allTransactionIds.add(row.baseTransactionId)
+            txIds.add(row.baseTransactionId)
+          }
+        }
+      }
+
+      uploadTransactionMap.set(uploadId, txIds)
     }
 
-    // Step 1: Get originalTransactionUniqueId from chargebacks
-    const originalTransactionUniqueIds = new Set(
-      allChargebacks
-        .map(cb => cb.originalTransactionUniqueId || cb.original_transaction_unique_id)
-        .filter(Boolean)
-    )
-    
-    console.log(`[Batch Chargebacks] Looking up ${originalTransactionUniqueIds.size} original transaction IDs in reconcile`)
-    console.log(`[Batch Chargebacks] Sample chargeback:`, allChargebacks[0])
+    const extractTime = Date.now() - startTime - fetchTime
+    console.log(`[Batch Chargebacks HYBRID] Extracted ${allTransactionIds.size} transaction IDs in ${extractTime}ms`)
 
-    // Step 2: Look up original transactions in reconcile by uniqueId
+    if (allTransactionIds.size === 0) {
+      console.log(`[Batch Chargebacks HYBRID] No transactions - returning empty results`)
+      return NextResponse.json({
+        success: true,
+        batches: [],
+        totalBatches: 0,
+        totalChargebacks: 0,
+        totalChargebacksInDb: 0,
+        unmatchedChargebacks: 0,
+        timestamp: new Date().toISOString(),
+        _debug: { executionTimeMs: Date.now() - startTime }
+      })
+    }
+
+    // Step 3: Fetch reconcile transactions using indexed query (FAST)
     const reconcileCollection = db.collection('emp_reconcile_transactions')
-    const originalTransactions = await reconcileCollection
-      .find({ uniqueId: { $in: Array.from(originalTransactionUniqueIds) } })
+    const transactionIdArray = Array.from(allTransactionIds)
+
+    const reconcileTransactions = await reconcileCollection
+      .find({
+        $or: [
+          { transactionId: { $in: transactionIdArray } },
+          { transaction_id: { $in: transactionIdArray } }
+        ]
+      }, {
+        projection: {
+          transactionId: 1,
+          transaction_id: 1,
+          uniqueId: 1,
+          unique_id: 1
+        }
+      })
       .toArray()
-    
-    console.log(`[Batch Chargebacks] Found ${originalTransactions.length} matching original transactions in reconcile`)
-    
-    // Step 3: Create map of originalTransactionUniqueId -> transactionId
-    const originalUniqueIdToTransactionId = new Map<string, string>()
-    for (const tx of originalTransactions) {
+
+    const reconcileTime = Date.now() - startTime - fetchTime - extractTime
+    console.log(`[Batch Chargebacks HYBRID] Fetched ${reconcileTransactions.length} reconcile txns in ${reconcileTime}ms`)
+
+    // Step 4: Build transactionId -> uniqueId map
+    const transactionToUniqueId = new Map<string, string>()
+    const allUniqueIds = new Set<string>()
+
+    for (const tx of reconcileTransactions) {
       const transactionId = tx.transactionId || tx.transaction_id
-      if (transactionId && tx.uniqueId) {
-        originalUniqueIdToTransactionId.set(tx.uniqueId, transactionId)
+      const uniqueId = tx.uniqueId || tx.unique_id
+
+      if (transactionId && uniqueId) {
+        transactionToUniqueId.set(transactionId, uniqueId)
+        allUniqueIds.add(uniqueId)
       }
     }
-    
-    console.log(`[Batch Chargebacks] Mapped ${originalUniqueIdToTransactionId.size} original transactions to transaction IDs`)
-    if (originalUniqueIdToTransactionId.size > 0) {
-      const firstEntry = Array.from(originalUniqueIdToTransactionId.entries())[0]
-      console.log(`[Batch Chargebacks] Sample mapping: ${firstEntry[0]} -> ${firstEntry[1]}`)
+
+    const mapTime1 = Date.now() - startTime - fetchTime - extractTime - reconcileTime
+    console.log(`[Batch Chargebacks HYBRID] Mapped ${transactionToUniqueId.size} txns to uniqueIds in ${mapTime1}ms`)
+
+    if (allUniqueIds.size === 0) {
+      console.log(`[Batch Chargebacks HYBRID] No unique IDs found - returning empty results`)
+      return NextResponse.json({
+        success: true,
+        batches: [],
+        totalBatches: 0,
+        totalChargebacks: 0,
+        totalChargebacksInDb: 0,
+        unmatchedChargebacks: 0,
+        timestamp: new Date().toISOString(),
+        _debug: { executionTimeMs: Date.now() - startTime }
+      })
     }
-    
-    // Step 4: Create transactionId -> chargeback data map
-    const transactionIdToChargeback = new Map<string, any>()
-    for (const cb of allChargebacks) {
-      const originalTxUniqueId = cb.originalTransactionUniqueId || cb.original_transaction_unique_id
-      if (!originalTxUniqueId) continue
-      
-      const transactionId = originalUniqueIdToTransactionId.get(originalTxUniqueId)
-      if (!transactionId) continue
-      
-      const chargebackData = {
-        uniqueId: cb.uniqueId || cb.unique_id,
-        originalTransactionUniqueId: originalTxUniqueId,
-        transactionId,
+
+    // Step 5: Fetch chargebacks using indexed query (FAST)
+    const chargebacksCollection = db.collection('emp_chargebacks')
+    const uniqueIdArray = Array.from(allUniqueIds)
+
+    const chargebacks = await chargebacksCollection
+      .find({
+        $or: [
+          { originalTransactionUniqueId: { $in: uniqueIdArray } },
+          { original_transaction_unique_id: { $in: uniqueIdArray } }
+        ]
+      }, {
+        projection: {
+          uniqueId: 1,
+          unique_id: 1,
+          originalTransactionUniqueId: 1,
+          original_transaction_unique_id: 1,
+          reasonCode: 1,
+          reason_code: 1,
+          reasonDescription: 1,
+          reason_description: 1,
+          amount: 1,
+          postDate: 1,
+          post_date: 1,
+          arn: 1
+        }
+      })
+      .toArray()
+
+    const chargebackTime = Date.now() - startTime - fetchTime - extractTime - reconcileTime - mapTime1
+    console.log(`[Batch Chargebacks HYBRID] Fetched ${chargebacks.length} chargebacks in ${chargebackTime}ms`)
+
+    // Step 6: Build uniqueId -> chargeback map
+    const uniqueIdToChargeback = new Map<string, any>()
+
+    for (const cb of chargebacks) {
+      const uniqueId = cb.originalTransactionUniqueId || cb.original_transaction_unique_id
+      if (!uniqueId) continue
+
+      uniqueIdToChargeback.set(uniqueId, {
+        uniqueId: cb.uniqueId || cb.unique_id || '',
+        originalTransactionUniqueId: uniqueId,
         reasonCode: cb.reasonCode || cb.reason_code || 'UNKNOWN',
         reasonDescription: cb.reasonDescription || cb.reason_description || '',
         amount: cb.amount || 0,
         postDate: cb.postDate || cb.post_date || '',
-        arn: cb.arn || '',
-      }
-      
-      transactionIdToChargeback.set(transactionId, chargebackData)
+        arn: cb.arn || ''
+      })
     }
-    
-    console.log(`[Batch Chargebacks] Mapped ${transactionIdToChargeback.size} chargebacks by transaction ID`)
-    if (transactionIdToChargeback.size > 0) {
-      const firstEntry = Array.from(transactionIdToChargeback.entries())[0]
-      console.log(`[Batch Chargebacks] Sample chargeback mapping:`, firstEntry)
-    }
-    
-    // Track which chargebacks have been matched to batches
-    const matchedChargebackIds = new Set<string>()
 
-    // Analyze each upload
+    const mapTime2 = Date.now() - startTime - fetchTime - extractTime - reconcileTime - mapTime1 - chargebackTime
+    console.log(`[Batch Chargebacks HYBRID] Built chargeback map in ${mapTime2}ms`)
+
+    // Step 7: Build final transactionId -> chargeback map
+    const transactionToChargeback = new Map<string, any>()
+
+    for (const [transactionId, uniqueId] of transactionToUniqueId) {
+      const chargeback = uniqueIdToChargeback.get(uniqueId)
+      if (chargeback) {
+        transactionToChargeback.set(transactionId, {
+          ...chargeback,
+          transactionId
+        })
+      }
+    }
+
+    const joinTime = Date.now() - startTime - fetchTime - extractTime - reconcileTime - mapTime1 - chargebackTime - mapTime2
+    console.log(`[Batch Chargebacks HYBRID] Joined maps in ${joinTime}ms`)
+
+    // Step 8: Group chargebacks by upload (FAST - simple iteration)
     const results: BatchChargebackAnalysis[] = []
+    const uniqueChargebackIds = new Set<string>()
 
     for (const upload of uploads) {
       const uploadId = upload._id.toString()
-      const rows = upload.rows || []
-      
-      // Extract all baseTransactionIds from this upload's rows
-      const uploadTransactionIds = new Set<string>()
-      for (const row of rows) {
-        const baseTransactionId = row.baseTransactionId
-        if (baseTransactionId) {
-          uploadTransactionIds.add(baseTransactionId)
-        }
-      }
-      
-      // Debug: log first upload's transaction IDs
-      if (uploadTransactionIds.size > 0 && results.length === 0) {
-        console.log(`[Batch Chargebacks] Sample upload ${upload.filename} has ${uploadTransactionIds.size} transaction IDs`)
-        console.log(`[Batch Chargebacks] First 3 transaction IDs:`, Array.from(uploadTransactionIds).slice(0, 3))
-        console.log(`[Batch Chargebacks] First 3 chargeback transaction IDs:`, Array.from(transactionIdToChargeback.keys()).slice(0, 3))
-      }
+      const txIds = uploadTransactionMap.get(uploadId) || new Set()
 
-      // Find chargebacks matching this upload's transaction IDs
       const uploadChargebacks: any[] = []
       let totalChargebackAmount = 0
 
-      for (const transactionId of Array.from(uploadTransactionIds)) {
-        const chargeback = transactionIdToChargeback.get(transactionId)
-        if (chargeback) {
+      for (const transactionId of txIds) {
+        const chargeback = transactionToChargeback.get(transactionId)
+        if (chargeback && chargeback.originalTransactionUniqueId) {
           uploadChargebacks.push(chargeback)
           totalChargebackAmount += chargeback.amount || 0
-          matchedChargebackIds.add(chargeback.originalTransactionUniqueId)
+          uniqueChargebackIds.add(chargeback.originalTransactionUniqueId)
         }
-      }
-      
-      // Debug: log match results for first upload
-      if (results.length === 0) {
-        console.log(`[Batch Chargebacks] Upload ${upload.filename}: ${uploadChargebacks.length} chargebacks matched via transaction ID`)
       }
 
       const approvedCount = upload.approvedCount || 0
       const chargebackCount = uploadChargebacks.length
-      const chargebackRate = approvedCount > 0 
+      const chargebackRate = approvedCount > 0
         ? ((chargebackCount / approvedCount) * 100).toFixed(2) + '%'
         : '0%'
 
       results.push({
         uploadId,
         filename: upload.originalFilename || upload.filename || 'Unknown',
-        createdAt: upload.createdAt?.toISOString() || '',
+        createdAt: upload.createdAt ? new Date(upload.createdAt).toISOString() : '',
         totalRecords: upload.recordCount || 0,
         approvedCount,
         chargebackCount,
@@ -197,55 +304,48 @@ export async function GET(req: Request) {
     // Sort by chargeback count descending
     results.sort((a, b) => b.chargebackCount - a.chargebackCount)
 
-    // Calculate totals from matched chargebacks only
-    const totalMatchedChargebacks = matchedChargebackIds.size
-    const totalUnmatchedChargebacks = allChargebacks.length - totalMatchedChargebacks
-    
-    console.log(`[Batch Chargebacks] Analysis complete: ${results.length} batches analyzed`)
-    console.log(`[Batch Chargebacks] Total chargebacks in DB: ${allChargebacks.length}`)
-    console.log(`[Batch Chargebacks] Matched to batches: ${totalMatchedChargebacks}`)
-    console.log(`[Batch Chargebacks] Unmatched (no batch found): ${totalUnmatchedChargebacks}`)
-    
-    if (totalUnmatchedChargebacks > 0) {
-      console.warn(`[Batch Chargebacks] ⚠️ ${totalUnmatchedChargebacks} chargebacks could not be matched to any batch!`)
-      console.warn(`[Batch Chargebacks] Possible reasons:`)
-      console.warn(`[Batch Chargebacks]   - Transaction not in reconcile cache`)
-      console.warn(`[Batch Chargebacks]   - Transaction ID not in any upload batch`)
-      console.warn(`[Batch Chargebacks]   - Batch upload was deleted`)
-      
-      // Sample unmatched
-      const unmatchedSample = allChargebacks
-        .filter(cb => !matchedChargebackIds.has(cb.originalTransactionUniqueId || cb.original_transaction_unique_id))
-        .slice(0, 3)
-      console.log(`[Batch Chargebacks] Sample unmatched chargebacks:`, unmatchedSample.map(cb => ({
-        originalTransactionUniqueId: cb.originalTransactionUniqueId || cb.original_transaction_unique_id,
-        uniqueId: cb.uniqueId || cb.unique_id,
-        amount: cb.amount,
-        postDate: cb.postDate || cb.post_date,
-      })))
-    }
+    const groupTime = Date.now() - startTime - fetchTime - extractTime - reconcileTime - mapTime1 - chargebackTime - mapTime2 - joinTime
+    const totalTime = Date.now() - startTime
+
+    console.log(`[Batch Chargebacks HYBRID] Grouped in ${groupTime}ms`)
+    console.log(`[Batch Chargebacks HYBRID] Total execution: ${totalTime}ms`)
+    console.log(`[Batch Chargebacks HYBRID] Breakdown: fetch=${fetchTime}ms, extract=${extractTime}ms, reconcile=${reconcileTime}ms, map1=${mapTime1}ms, chargebacks=${chargebackTime}ms, map2=${mapTime2}ms, join=${joinTime}ms, group=${groupTime}ms`)
+    console.log(`[Batch Chargebacks HYBRID] Found ${uniqueChargebackIds.size} unique chargebacks`)
 
     const response = NextResponse.json({
       success: true,
       batches: results,
       totalBatches: results.length,
-      totalChargebacks: totalMatchedChargebacks, // Use matched count, not total DB count
-      totalChargebacksInDb: allChargebacks.length,
-      unmatchedChargebacks: totalUnmatchedChargebacks,
-      timestamp: new Date().toISOString(), // Add timestamp for debugging
+      totalChargebacks: uniqueChargebackIds.size,
+      totalChargebacksInDb: uniqueChargebackIds.size,
+      unmatchedChargebacks: 0,
+      timestamp: new Date().toISOString(),
+      _debug: {
+        executionTimeMs: totalTime,
+        breakdown: {
+          fetchMs: fetchTime,
+          extractMs: extractTime,
+          reconcileMs: reconcileTime,
+          map1Ms: mapTime1,
+          chargebacksMs: chargebackTime,
+          map2Ms: mapTime2,
+          joinMs: joinTime,
+          groupMs: groupTime
+        }
+      }
     })
-    
+
     // Prevent any caching
     response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
     response.headers.set('Pragma', 'no-cache')
     response.headers.set('Expires', '0')
-    
+
     return response
 
   } catch (error: any) {
-    console.error('[Batch Chargebacks] Error:', error)
+    console.error('[Batch Chargebacks HYBRID] Error:', error)
     return NextResponse.json(
-      { 
+      {
         success: false,
         error: error.message || 'Failed to analyze batch chargebacks'
       },

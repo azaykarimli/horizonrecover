@@ -42,6 +42,7 @@ export default async function UploadVisualizer({ params }: { params: Promise<{ i
       rows={rows}
       reconciliationReport={(doc as any).reconciliationReport}
       lastReconciledAt={(doc as any).lastReconciledAt}
+      filteredRecords={(doc as any).filteredRecords}
     />
   )
 }

@@ -1,5 +1,5 @@
 # Contributing to MeLinux emerchantpay Integration
-
+  
 Thank you for your interest in contributing to the MeLinux emerchantpay Integration Platform! This document provides guidelines and instructions for collaborators.
 
 ## Table of Contents

@@ -7,32 +7,30 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { 
-  BarChart, 
-  Bar, 
-  PieChart, 
-  Pie, 
-  Cell, 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
-  ResponsiveContainer 
+import {
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
 } from 'recharts'
-import { 
-  TrendingUp, 
-  DollarSign, 
-  CreditCard, 
-  AlertTriangle, 
-  RefreshCw, 
-  Calendar,
+import {
+  TrendingUp,
+  DollarSign,
+  CreditCard,
+  AlertTriangle,
+  RefreshCw,
   Activity,
   ShieldAlert,
   CheckCircle2,
-  XCircle,
   Search,
   Filter,
   FileText,
@@ -69,25 +67,44 @@ interface Chargeback {
   cardNumber: string
 }
 
-interface AnalyticsData {
-  transactions: Transaction[]
-  chargebacks: Chargeback[]
-  loading: boolean
+interface StatsData {
+  totalTransactions: number
+  baseTransactionsCount: number
+  totalVolume: string
+  totalChargebacks: number
+  chargebackRate: string
+  transactionsByType: any[]
+  transactionsByStatus: any[]
+  transactionsByScheme: any[]
+  transactionTimeline: any[]
+  chargebacksByReason: any[]
+  rawReconcileCount: number
+}
+
+const DEFAULT_STATS: StatsData = {
+  totalTransactions: 0,
+  baseTransactionsCount: 0,
+  totalVolume: '€0.00',
+  totalChargebacks: 0,
+  chargebackRate: '0%',
+  transactionsByType: [],
+  transactionsByStatus: [],
+  transactionsByScheme: [],
+  transactionTimeline: [],
+  chargebacksByReason: [],
+  rawReconcileCount: 0
 }
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#ff7c7c']
 
 export default function AnalyticsPage() {
-  const [data, setData] = useState<AnalyticsData>({
-    transactions: [],
-    chargebacks: [],
-    loading: true,
-  })
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [chargebacks, setChargebacks] = useState<Chargeback[]>([])
+  const [stats, setStats] = useState<StatsData>(DEFAULT_STATS)
 
-  const [dateRange, setDateRange] = useState({
-    startDate: getDefaultStartDate(),
-    endDate: getDefaultEndDate(),
-  })
+  const [isLoadingStats, setIsLoadingStats] = useState(true)
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const [transactionFilters, setTransactionFilters] = useState({
     search: '',
@@ -95,6 +112,8 @@ export default function AnalyticsPage() {
     type: 'all',
     page: 1,
     perPage: 25,
+    total: 0,
+    totalPages: 1
   })
 
   const [chargebackFilters, setChargebackFilters] = useState({
@@ -104,159 +123,156 @@ export default function AnalyticsPage() {
     perPage: 25,
   })
 
+  // Initial load
   useEffect(() => {
-    loadFromCache()
+    loadStats()
+    // loadTransactions() is called by the filter effect below
+    loadChargebacks()
   }, [])
 
-  async function fetchAnalyticsData(dumpAll = false) {
-    setData(prev => ({ ...prev, loading: true }))
-    
+  async function loadStats() {
+    setIsLoadingStats(true)
     try {
-      const dumpParam = dumpAll ? '&dump_all=true' : ''
-      const [transactionsRes, chargebacksRes] = await Promise.all([
-        fetch(`/api/emp/analytics/transactions?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}${dumpParam}`),
-        fetch(`/api/emp/analytics/chargebacks?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}${dumpParam}`),
-      ])
-
-      const transactionsData = await transactionsRes.json()
-      const chargebacksData = await chargebacksRes.json()
-
-      if (!transactionsRes.ok) {
-        throw new Error(transactionsData.error || 'Failed to fetch transactions')
-      }
-
-      setData({
-        transactions: transactionsData.transactions || [],
-        chargebacks: chargebacksData.chargebacks || [],
-        loading: false,
-      })
-
-      toast.success(`Loaded ${transactionsData.transactions?.length || 0} transactions and ${chargebacksData.chargebacks?.length || 0} chargebacks`)
+      const res = await fetch(`/api/emp/analytics/stats`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch stats')
+      setStats(data)
     } catch (error: any) {
-      toast.error(error.message || 'Failed to fetch analytics data')
-      setData(prev => ({ ...prev, loading: false }))
+      console.error('Stats error:', error)
+      toast.error('Failed to load statistics')
+    } finally {
+      setIsLoadingStats(false)
     }
   }
 
-  async function loadFromCache() {
-    setData(prev => ({ ...prev, loading: true }))
+  async function loadTransactions() {
+    setIsLoadingTransactions(true)
     try {
-      const [txRes, cbRes] = await Promise.all([
-        fetch(`/api/emp/analytics/cache/transactions?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`),
-        fetch(`/api/emp/analytics/cache/chargebacks?start_date=${dateRange.startDate}&end_date=${dateRange.endDate}`),
-      ])
-      const tx = await txRes.json()
-      const cb = await cbRes.json()
-      setData({
-        transactions: tx.transactions || [],
-        chargebacks: cb.chargebacks || [],
-        loading: false,
+      const params = new URLSearchParams({
+        page: transactionFilters.page.toString(),
+        perPage: transactionFilters.perPage.toString()
       })
-      toast.success(`Loaded from cache: ${tx.count || 0} tx, ${cb.count || 0} chargebacks`)
-    } catch (e: any) {
-      toast.error(e?.message || 'Failed to load from cache')
-      setData(prev => ({ ...prev, loading: false }))
+
+      const res = await fetch(`/api/emp/analytics/cache/transactions?${params.toString()}`)
+      const data = await res.json()
+
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch transactions')
+
+      setTransactions(data.transactions || [])
+      setTransactionFilters(prev => ({
+        ...prev,
+        total: data.pagination?.total || 0,
+        totalPages: data.pagination?.totalPages || 1
+      }))
+    } catch (error: any) {
+      console.error('Transactions error:', error)
+      toast.error('Failed to load transactions')
+    } finally {
+      setIsLoadingTransactions(false)
     }
   }
 
-  async function resyncTransactions() {
+  async function loadChargebacks() {
+    try {
+      const res = await fetch(`/api/emp/analytics/cache/chargebacks`)
+      const data = await res.json()
+      if (res.ok) {
+        setChargebacks(data.chargebacks || [])
+      }
+    } catch (e) {
+      console.error('Chargebacks error:', e)
+    }
+  }
+
+  // Reload transactions when page/filters change
+  useEffect(() => {
+    loadTransactions()
+  }, [transactionFilters.page, transactionFilters.perPage])
+
+  async function resyncTransactions(options: { skipReload?: boolean } = {}) {
+    const { skipReload = false } = options
     try {
       toast.info('Resyncing transactions...')
       const res = await fetch(`/api/emp/analytics/cache/transactions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ start_date: dateRange.startDate, end_date: dateRange.endDate }),
+        body: JSON.stringify({}), // No dates, backend defaults to last 2 years
       })
       const j = await res.json()
       if (!res.ok) throw new Error(j?.error || 'Resync failed')
+
       toast.success(`Transactions resynced: ${j.saved || 0} saved`)
-      await loadFromCache()
+      if (!skipReload) {
+        loadStats()
+        loadTransactions()
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Resync failed')
+      throw e
     }
   }
 
-  async function resyncChargebacks() {
+  async function resyncChargebacks(options: { skipReload?: boolean } = {}) {
+    const { skipReload = false } = options
     try {
       toast.info('Resyncing chargebacks...')
       const res = await fetch(`/api/emp/analytics/cache/chargebacks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ start_date: dateRange.startDate, end_date: dateRange.endDate }),
+        body: JSON.stringify({}), // No dates, backend defaults to last 2 years
       })
       const j = await res.json()
       if (!res.ok) throw new Error(j?.error || 'Resync failed')
+
       toast.success(`Chargebacks resynced: ${j.saved || 0} saved`)
-      await loadFromCache()
+      if (!skipReload) {
+        loadStats()
+        loadChargebacks()
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Resync failed')
+      throw e
     }
   }
 
-  function handleDateRangeChange(field: 'startDate' | 'endDate', value: string) {
-    setDateRange(prev => ({ ...prev, [field]: value }))
+  async function refreshAllData() {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      const results = await Promise.allSettled([
+        resyncTransactions({ skipReload: true }),
+        resyncChargebacks({ skipReload: true }),
+      ])
+      const hasFailure = results.some((r) => r.status === 'rejected')
+      if (!hasFailure) {
+        await Promise.all([loadStats(), loadTransactions(), loadChargebacks()])
+        toast.success('Analytics and chargebacks refreshed')
+      }
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
-  // Filter transactions based on search and filters
-  const filteredTransactions = useMemo(() => {
-    let filtered = data.transactions
-
-    // Search filter (transaction ID, card number, unique ID)
-    if (transactionFilters.search) {
-      const searchLower = transactionFilters.search.toLowerCase()
-      filtered = filtered.filter(tx => 
-        tx.transactionId?.toLowerCase().includes(searchLower) ||
-        tx.uniqueId?.toLowerCase().includes(searchLower) ||
-        tx.cardNumber?.toLowerCase().includes(searchLower) ||
-        tx.bankAccountNumber?.toLowerCase().includes(searchLower)
-      )
-    }
-
-    // Status filter
-    if (transactionFilters.status !== 'all') {
-      filtered = filtered.filter(tx => tx.status?.toLowerCase() === transactionFilters.status)
-    }
-
-    // Type filter
-    if (transactionFilters.type !== 'all') {
-      filtered = filtered.filter(tx => tx.type?.toLowerCase() === transactionFilters.type)
-    }
-
-    return filtered
-  }, [data.transactions, transactionFilters.search, transactionFilters.status, transactionFilters.type])
-
-  // Paginate transactions
-  const paginatedTransactions = useMemo(() => {
-    const start = (transactionFilters.page - 1) * transactionFilters.perPage
-    const end = start + transactionFilters.perPage
-    return filteredTransactions.slice(start, end)
-  }, [filteredTransactions, transactionFilters.page, transactionFilters.perPage])
-
-  const totalTxPages = Math.ceil(filteredTransactions.length / transactionFilters.perPage)
-
-  // Filter chargebacks based on search and filters
+  // Filter chargebacks based on search and filters (Client-side for now as list is usually small)
   const filteredChargebacks = useMemo(() => {
-    let filtered = data.chargebacks
+    let filtered = chargebacks
 
-    // Search filter (ARN, unique ID, card number)
     if (chargebackFilters.search) {
       const searchLower = chargebackFilters.search.toLowerCase()
-      filtered = filtered.filter(cb => 
+      filtered = filtered.filter(cb =>
         cb.arn?.toLowerCase().includes(searchLower) ||
         cb.uniqueId?.toLowerCase().includes(searchLower) ||
         cb.cardNumber?.toLowerCase().includes(searchLower)
       )
     }
 
-    // Reason code filter
     if (chargebackFilters.reasonCode !== 'all') {
       filtered = filtered.filter(cb => cb.reasonCode?.toLowerCase() === chargebackFilters.reasonCode)
     }
 
     return filtered
-  }, [data.chargebacks, chargebackFilters.search, chargebackFilters.reasonCode])
+  }, [chargebacks, chargebackFilters.search, chargebackFilters.reasonCode])
 
-  // Paginate chargebacks
   const paginatedChargebacks = useMemo(() => {
     const start = (chargebackFilters.page - 1) * chargebackFilters.perPage
     const end = start + chargebackFilters.perPage
@@ -265,46 +281,25 @@ export default function AnalyticsPage() {
 
   const totalCbPages = Math.ceil(filteredChargebacks.length / chargebackFilters.perPage)
 
-  // Get unique statuses and types for filter dropdowns
-  const uniqueStatuses = useMemo(() => {
-    const statuses = new Set(data.transactions.map(tx => tx.status?.toLowerCase()).filter(Boolean))
-    return Array.from(statuses).sort()
-  }, [data.transactions])
-
-  const uniqueTypes = useMemo(() => {
-    const types = new Set(data.transactions.map(tx => tx.type?.toLowerCase()).filter(Boolean))
-    return Array.from(types).sort()
-  }, [data.transactions])
-
   const uniqueReasonCodes = useMemo(() => {
-    const codes = new Set(data.chargebacks.map(cb => cb.reasonCode?.toLowerCase()).filter(Boolean))
+    const codes = new Set(chargebacks.map(cb => cb.reasonCode?.toLowerCase()).filter(Boolean))
     return Array.from(codes).sort()
-  }, [data.chargebacks])
-
-  // Calculate statistics
-  const stats = calculateStats(data.transactions, data.chargebacks)
+  }, [chargebacks])
 
   // PDF export handler
   const handleExportPDF = () => {
     try {
-      const totalVolume = data.transactions
-        .filter(t => ['approved', 'pending_async'].includes(t.status?.toLowerCase()))
-        .reduce((sum, t) => sum + (t.amount || 0), 0) / 100 // Convert to major units
-      
-      const avgTransaction = stats.totalTransactions > 0 
-        ? totalVolume / stats.totalTransactions 
-        : 0
-
+      // Use stats directly for PDF
       const typeData = stats.transactionsByType.map(t => ({
         name: t.name,
         value: t.value,
-        percentage: ((t.value / stats.allTransactionsCount) * 100).toFixed(1) + '%'
+        percentage: ((t.value / stats.baseTransactionsCount) * 100).toFixed(1) + '%'
       }))
 
       const statusData = stats.transactionsByStatus.map(s => ({
         name: s.name,
         value: s.value,
-        percentage: ((s.value / stats.allTransactionsCount) * 100).toFixed(1) + '%'
+        percentage: ((s.value / stats.baseTransactionsCount) * 100).toFixed(1) + '%'
       }))
 
       const schemeData = stats.transactionsByScheme.map(s => ({
@@ -313,11 +308,15 @@ export default function AnalyticsPage() {
         percentage: ((s.value / stats.totalTransactions) * 100).toFixed(1) + '%'
       }))
 
+      // Parse volume string back to number for avg calc (rough approx)
+      const volNum = parseFloat(stats.totalVolume.replace(/[^0-9.-]+/g, ''))
+      const avgTransaction = stats.totalTransactions > 0 ? volNum / stats.totalTransactions : 0
+
       exportAnalyticsPDF({
-        dateRange: `${dateRange.startDate} to ${dateRange.endDate}`,
+        dateRange: `All Time`,
         stats: {
           totalTransactions: stats.totalTransactions,
-          totalVolume,
+          totalVolume: volNum,
           totalChargebacks: stats.totalChargebacks,
           chargebackRate: stats.chargebackRate,
           averageTransaction: avgTransaction,
@@ -325,10 +324,10 @@ export default function AnalyticsPage() {
         typeData,
         statusData,
         schemeData,
-        transactions: filteredTransactions,
-        chargebacks: data.chargebacks,
+        transactions: transactions, // Note: PDF will only contain current page of transactions now
+        chargebacks: chargebacks,
       })
-      
+
       toast.success('PDF report generated successfully')
     } catch (error) {
       console.error('Error generating PDF:', error)
@@ -345,7 +344,7 @@ export default function AnalyticsPage() {
           <p className="text-muted-foreground">Transaction insights and chargeback overview</p>
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
-          <Button onClick={handleExportPDF} disabled={data.loading} variant="outline" className="gap-2">
+          <Button onClick={handleExportPDF} disabled={isLoadingStats} variant="outline" className="gap-2">
             <Download className="h-4 w-4" />
             Export PDF
           </Button>
@@ -361,50 +360,12 @@ export default function AnalyticsPage() {
               CB Extraction
             </Button>
           </Link>
-          <Button onClick={() => {resyncTransactions(); resyncChargebacks()}} disabled={data.loading} className="gap-2" variant="outline">
-            <RefreshCw className={`h-4 w-4 ${data.loading ? 'animate-spin' : ''}`} />
-            Refresh Data
+          <Button onClick={refreshAllData} disabled={isLoadingStats || isRefreshing} className="gap-2" variant="outline">
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Refreshing…' : 'Refresh Data'}
           </Button>
         </div>
       </div>
-
-      {/* Date Range Filter */}
-      <Card className="hidden">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />
-            Date Range Filter
-          </CardTitle>
-          <CardDescription>Select the date range for analytics data</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
-              <Label htmlFor="startDate">Start Date</Label>
-              <Input
-                id="startDate"
-                type="date"
-                value={dateRange.startDate}
-                onChange={(e) => handleDateRangeChange('startDate', e.target.value)}
-              />
-            </div>
-            <div className="flex-1">
-              <Label htmlFor="endDate">End Date</Label>
-              <Input
-                id="endDate"
-                type="date"
-                value={dateRange.endDate}
-                onChange={(e) => handleDateRangeChange('endDate', e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={loadFromCache} disabled={data.loading}>
-                Apply Filter
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Key Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -414,9 +375,13 @@ export default function AnalyticsPage() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalTransactions.toLocaleString()}</div>
+            {isLoadingStats ? (
+              <div className="h-8 w-24 bg-muted animate-pulse rounded" />
+            ) : (
+              <div className="text-2xl font-bold">{stats.totalTransactions.toLocaleString()}</div>
+            )}
             <p className="text-xs text-muted-foreground">
-              Approved + Pending transactions
+              Approved transactions
             </p>
           </CardContent>
         </Card>
@@ -427,7 +392,11 @@ export default function AnalyticsPage() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalVolume}</div>
+            {isLoadingStats ? (
+              <div className="h-8 w-24 bg-muted animate-pulse rounded" />
+            ) : (
+              <div className="text-2xl font-bold">{stats.totalVolume}</div>
+            )}
             <p className="text-xs text-muted-foreground">Transaction volume</p>
           </CardContent>
         </Card>
@@ -438,7 +407,11 @@ export default function AnalyticsPage() {
             <AlertTriangle className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">{stats.totalChargebacks.toLocaleString()}</div>
+            {isLoadingStats ? (
+              <div className="h-8 w-24 bg-muted animate-pulse rounded" />
+            ) : (
+              <div className="text-2xl font-bold text-destructive">{stats.totalChargebacks.toLocaleString()}</div>
+            )}
             <p className="text-xs text-muted-foreground">Disputed transactions</p>
           </CardContent>
         </Card>
@@ -449,7 +422,11 @@ export default function AnalyticsPage() {
             <ShieldAlert className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.chargebackRate}</div>
+            {isLoadingStats ? (
+              <div className="h-8 w-24 bg-muted animate-pulse rounded" />
+            ) : (
+              <div className="text-2xl font-bold">{stats.chargebackRate}</div>
+            )}
             <p className="text-xs text-muted-foreground">Of total transactions</p>
           </CardContent>
         </Card>
@@ -467,7 +444,7 @@ export default function AnalyticsPage() {
             <CardDescription>Distribution of transaction types</CardDescription>
           </CardHeader>
           <CardContent>
-            {data.loading ? (
+            {isLoadingStats ? (
               <div className="h-[300px] flex items-center justify-center">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
@@ -506,7 +483,7 @@ export default function AnalyticsPage() {
             <CardDescription>Status distribution overview</CardDescription>
           </CardHeader>
           <CardContent>
-            {data.loading ? (
+            {isLoadingStats ? (
               <div className="h-[300px] flex items-center justify-center">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
@@ -535,7 +512,7 @@ export default function AnalyticsPage() {
             <CardDescription>Transactions by card network</CardDescription>
           </CardHeader>
           <CardContent>
-            {data.loading ? (
+            {isLoadingStats ? (
               <div className="h-[300px] flex items-center justify-center">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
@@ -574,7 +551,7 @@ export default function AnalyticsPage() {
             <CardDescription>Daily transaction volume</CardDescription>
           </CardHeader>
           <CardContent>
-            {data.loading ? (
+            {isLoadingStats ? (
               <div className="h-[300px] flex items-center justify-center">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
@@ -604,89 +581,27 @@ export default function AnalyticsPage() {
           <CardDescription>All fetched transactions with details</CardDescription>
         </CardHeader>
         <CardContent>
-          {data.loading ? (
+          {isLoadingTransactions ? (
             <div className="h-[200px] flex items-center justify-center">
               <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : data.transactions.length === 0 ? (
+          ) : transactions.length === 0 ? (
             <div className="h-[200px] flex flex-col items-center justify-center text-muted-foreground">
               <Activity className="h-12 w-12 mb-2 text-muted-foreground/30" />
               <p className="font-medium">No transactions found</p>
-              <p className="text-sm">Try adjusting the date range filter.</p>
+              <p className="text-sm text-center max-w-sm mb-4">
+                If you believe there should be data, try refreshing the cache.
+              </p>
+              <Button onClick={refreshAllData} variant="outline" size="sm" disabled={isRefreshing}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh Data
+              </Button>
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Filter Controls */}
-              <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
-                <div className="flex-1 w-full">
-                  <Label htmlFor="txSearch" className="text-sm mb-1.5 flex items-center gap-2">
-                    <Search className="h-4 w-4" />
-                    Search Transactions
-                  </Label>
-                  <Input
-                    id="txSearch"
-                    type="text"
-                    placeholder="Search by ID, card number, or account..."
-                    value={transactionFilters.search}
-                    onChange={(e) => setTransactionFilters(prev => ({ ...prev, search: e.target.value }))}
-                  />
-                </div>
-                <div className="w-full sm:w-[180px]">
-                  <Label htmlFor="txStatus" className="text-sm mb-1.5 flex items-center gap-2">
-                    <Filter className="h-4 w-4" />
-                    Status
-                  </Label>
-                  <Select
-                    value={transactionFilters.status}
-                    onValueChange={(value) => setTransactionFilters(prev => ({ ...prev, status: value }))}
-                  >
-                    <SelectTrigger id="txStatus">
-                      <SelectValue placeholder="All Statuses" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Statuses</SelectItem>
-                      {uniqueStatuses.map(status => (
-                        <SelectItem key={status} value={status}>
-                          {status.charAt(0).toUpperCase() + status.slice(1)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="w-full sm:w-[180px]">
-                  <Label htmlFor="txType" className="text-sm mb-1.5">Type</Label>
-                  <Select
-                    value={transactionFilters.type}
-                    onValueChange={(value) => setTransactionFilters(prev => ({ ...prev, type: value }))}
-                  >
-                    <SelectTrigger id="txType">
-                      <SelectValue placeholder="All Types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Types</SelectItem>
-                      {uniqueTypes.map(type => (
-                        <SelectItem key={type} value={type}>
-                          {type.toUpperCase()}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {(transactionFilters.search || transactionFilters.status !== 'all' || transactionFilters.type !== 'all') && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setTransactionFilters(prev => ({ ...prev, search: '', status: 'all', type: 'all', page: 1 }))}
-                  >
-                    Clear Filters
-                  </Button>
-                )}
-              </div>
-
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
-                  Showing {((transactionFilters.page - 1) * transactionFilters.perPage) + 1} - {Math.min(transactionFilters.page * transactionFilters.perPage, filteredTransactions.length)} of {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? 's' : ''}
-                  {filteredTransactions.length !== data.transactions.length && ` (filtered from ${data.transactions.length})`}
+                  Showing {((transactionFilters.page - 1) * transactionFilters.perPage) + 1} - {Math.min(transactionFilters.page * transactionFilters.perPage, transactionFilters.total)} of {transactionFilters.total} transactions
                 </p>
               </div>
 
@@ -706,7 +621,7 @@ export default function AnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedTransactions.map((tx, idx) => (
+                    {transactions.map((tx, idx) => (
                       <tr key={idx} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                         <td className="py-3 px-4 text-sm whitespace-nowrap">
                           {tx.transactionDate ? new Date(tx.transactionDate).toLocaleString() : '-'}
@@ -729,13 +644,12 @@ export default function AnalyticsPage() {
                           {tx.cardScheme || '-'}
                         </td>
                         <td className="py-3 px-4 text-sm">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                            tx.status === 'approved' || tx.status === 'completed'
-                              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                              : tx.status === 'declined' || tx.status === 'error'
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${tx.status === 'approved' || tx.status === 'completed'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                            : tx.status === 'declined' || tx.status === 'error'
                               ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
                               : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
-                          }`}>
+                            }`}>
                             {tx.status || 'completed'}
                           </span>
                         </td>
@@ -752,7 +666,7 @@ export default function AnalyticsPage() {
               </div>
 
               {/* Pagination Controls */}
-              {totalTxPages > 1 && (
+              {transactionFilters.totalPages > 1 && (
                 <div className="flex items-center justify-between pt-2">
                   <div className="flex items-center gap-2">
                     <Label htmlFor="txPerPage" className="text-sm">Per page:</Label>
@@ -781,13 +695,13 @@ export default function AnalyticsPage() {
                       Previous
                     </Button>
                     <span className="text-sm text-muted-foreground">
-                      Page {transactionFilters.page} of {totalTxPages}
+                      Page {transactionFilters.page} of {transactionFilters.totalPages}
                     </span>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setTransactionFilters(prev => ({ ...prev, page: Math.min(totalTxPages, prev.page + 1) }))}
-                      disabled={transactionFilters.page === totalTxPages}
+                      onClick={() => setTransactionFilters(prev => ({ ...prev, page: Math.min(transactionFilters.totalPages, prev.page + 1) }))}
+                      disabled={transactionFilters.page === transactionFilters.totalPages}
                     >
                       Next
                     </Button>
@@ -806,23 +720,23 @@ export default function AnalyticsPage() {
             <ShieldAlert className="h-5 w-5 text-destructive" />
             Chargeback Overview
             <Button variant="outline" className="gap-2 ml-auto">
-            <FileText className="h-4 w-4" />
-            Batch Analysis
-          </Button>
+              <FileText className="h-4 w-4" />
+              Batch Analysis
+            </Button>
           </CardTitle>
           <CardDescription>Detailed chargeback analysis with reason codes</CardDescription>
 
         </CardHeader>
         <CardContent>
-          {data.loading ? (
+          {isLoadingStats ? (
             <div className="h-[200px] flex items-center justify-center">
               <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : data.chargebacks.length === 0 ? (
+          ) : stats.chargebacksByReason.length === 0 ? (
             <div className="h-[200px] flex flex-col items-center justify-center text-muted-foreground">
               <CheckCircle2 className="h-12 w-12 mb-2 text-green-500" />
               <p className="font-medium">No chargebacks found</p>
-              <p className="text-sm">Great news! No chargebacks in the selected period.</p>
+              <p className="text-sm">Great news! No chargebacks found.</p>
             </div>
           ) : (
             <div className="space-y-6">
@@ -859,7 +773,7 @@ export default function AnalyticsPage() {
               {/* Chargeback Details Table */}
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Chargeback Details</h3>
-                
+
                 {/* Chargeback Filter Controls */}
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
                   <div className="flex-1 w-full">
@@ -911,11 +825,11 @@ export default function AnalyticsPage() {
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-muted-foreground">
                     Showing {((chargebackFilters.page - 1) * chargebackFilters.perPage) + 1} - {Math.min(chargebackFilters.page * chargebackFilters.perPage, filteredChargebacks.length)} of {filteredChargebacks.length} chargeback{filteredChargebacks.length !== 1 ? 's' : ''}
-                    {filteredChargebacks.length !== data.chargebacks.length && ` (filtered from ${data.chargebacks.length})`}
+                    {filteredChargebacks.length !== chargebacks.length && ` (filtered from ${chargebacks.length})`}
                   </p>
                 </div>
 
-                <div className="rounded-md border">
+                <div className="rounded-md border overflow-x-auto">
                   <table className="w-full">
                     <thead className="bg-muted/50">
                       <tr className="border-b">
@@ -930,8 +844,8 @@ export default function AnalyticsPage() {
                     <tbody>
                       {paginatedChargebacks.map((cb, idx) => (
                         <tr key={idx} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                          <td className="py-3 px-4 text-sm">{cb.postDate}</td>
-                          <td className="py-3 px-4 text-sm font-mono text-xs">{cb.arn || cb.uniqueId}</td>
+                          <td className="py-3 px-4 text-sm whitespace-nowrap">{cb.postDate}</td>
+                          <td className="py-3 px-4 text-sm font-mono text-xs whitespace-nowrap">{cb.arn || cb.uniqueId}</td>
                           <td className="py-3 px-4 text-sm">
                             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
                               {cb.type}
@@ -1000,136 +914,6 @@ export default function AnalyticsPage() {
       </Card>
     </div>
   )
-}
-
-// Helper functions
-function getDefaultStartDate(): string {
-  const date = new Date()
-  //date.setFullYear(date.getFullYear() - 1)
-  // last 30 days
-  date.setDate(date.getDate() - 30)
-  return date.toISOString().split('T')[0]
-}
-
-function getDefaultEndDate(): string {
-  const date = new Date()
-  date.setDate(date.getDate() + 30)
-  return date.toISOString().split('T')[0]
-}
-
-function calculateStats(transactions: Transaction[], chargebacks: Chargeback[]) {
-  // Use ALL transactions from reconcile (5033) - DON'T filter out anything
-  // The reconcile API gives us ALL transaction attempts
-  const allTransactions = transactions
-  
-  // Active/successful transactions = approved + pending_async only (for KPIs)
-  const activeTransactions = allTransactions.filter(t => {
-    const status = t.status?.toLowerCase()
-    return status === 'approved' || status === 'pending_async'
-  })
-  
-  // Group ALL transactions by type (including everything from reconcile)
-  const typeGroups = allTransactions.reduce((acc, t) => {
-    const type = t.type?.toLowerCase() || 'unknown'
-    // Skip chargeback TYPE from reconcile (those are duplicates, we use chargebacks API)
-    if (type !== 'chargeback') {
-      acc[type] = (acc[type] || 0) + 1
-    }
-    return acc
-  }, {} as Record<string, number>)
-
-  // Add REAL chargebacks from chargebacks API endpoint
-  if (chargebacks.length > 0) {
-    typeGroups['chargeback'] = chargebacks.length
-  }
-
-  const transactionsByType = Object.entries(typeGroups).map(([name, value]) => ({
-    name: name.charAt(0).toUpperCase() + name.slice(1),
-    value,
-  }))
-
-  // Group ALL transactions by status (including everything from reconcile)
-  const statusGroups = allTransactions.reduce((acc, t) => {
-    const status = t.status?.toLowerCase() || 'unknown'
-    // Skip chargebacked STATUS from reconcile (those are flags, we use chargebacks API)
-    if (status !== 'chargebacked') {
-      acc[status] = (acc[status] || 0) + 1
-    }
-    return acc
-  }, {} as Record<string, number>)
-
-  // Add REAL chargebacks count from chargebacks API endpoint
-  if (chargebacks.length > 0) {
-    statusGroups['chargebacked'] = chargebacks.length
-  }
-
-  const transactionsByStatus = Object.entries(statusGroups).map(([name, value]) => ({
-    name: name.charAt(0).toUpperCase() + name.slice(1),
-    value,
-  }))
-
-  // Group transactions by card scheme (default to SEPA Direct Debit if empty)
-  const schemeGroups = activeTransactions.reduce((acc, t) => {
-    const scheme = t.cardScheme || 'SEPA Direct Debit'
-    acc[scheme] = (acc[scheme] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-
-  const transactionsByScheme = Object.entries(schemeGroups).map(([name, value]) => ({
-    name,
-    value,
-  }))
-
-  // Transaction timeline
-  const timelineGroups = activeTransactions.reduce((acc, t) => {
-    const date = t.transactionDate?.split(' ')[0] || 'unknown'
-    acc[date] = (acc[date] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-
-  const transactionTimeline = Object.entries(timelineGroups)
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => a.date.localeCompare(b.date))
-
-  // Calculate total volume - use active transactions only
-  const totalVolume = activeTransactions.reduce((sum, t) => sum + (t.amount || 0), 0)
-  const currencies = [...new Set(activeTransactions.map(t => t.currency))]
-  const volumeFormatted = currencies.length === 1 
-    ? formatCurrency(totalVolume, currencies[0])
-    : formatCurrency(totalVolume, 'EUR') // Default to EUR if mixed
-
-  // Chargeback rate - use active transactions for denominator
-  const chargebackRate = activeTransactions.length > 0 
-    ? ((chargebacks.length / activeTransactions.length) * 100).toFixed(2) + '%'
-    : '0%'
-
-  // Group chargebacks by reason
-  const reasonCodeToCount: Record<string, number> = {}
-  const reasonCodeToDesc: Record<string, string> = {}
-  for (const cb of chargebacks) {
-    const code = cb.reasonCode || 'UNK'
-    reasonCodeToCount[code] = (reasonCodeToCount[code] || 0) + 1
-    if (!reasonCodeToDesc[code] && cb.reasonDescription) {
-      reasonCodeToDesc[code] = cb.reasonDescription
-    }
-  }
-  const chargebacksByReason = Object.entries(reasonCodeToCount)
-    .map(([code, value]) => ({ code, value, description: reasonCodeToDesc[code] || '' }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10)
-
-  return {
-    totalTransactions: activeTransactions.length,
-    totalVolume: volumeFormatted,
-    totalChargebacks: chargebacks.length, // Real chargebacks from chargebacks API (435)
-    chargebackRate,
-    transactionsByType,
-    transactionsByStatus,
-    transactionsByScheme,
-    transactionTimeline,
-    chargebacksByReason,
-    allTransactionsCount: allTransactions.length, // Total from reconcile (5033)
-  }
 }
 
 function formatCurrency(amountMinor: number, currency: string): string {

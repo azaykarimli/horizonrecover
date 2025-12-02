@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ObjectId } from 'mongodb'
 import { getMongoClient, getDbName } from '@/lib/db'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -8,9 +9,12 @@ export const runtime = 'nodejs'
  * POST /api/emp/uploads/filter-chargebacks/[id]
  * 
  * Removes rows from upload that have IBANs matching chargebacks in cache
+ * Only Super Owner can filter uploads
  */
 export async function POST(_req: Request, ctx: { params: { id: string } }) {
   try {
+    await requireWriteAccess()
+
     const { id } = ctx.params
 
     const client = await getMongoClient()
@@ -39,8 +43,8 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
     console.log(`[Filter Chargebacks] Found ${allChargebacks.length} chargebacks in cache`)
 
     if (allChargebacks.length === 0) {
-      return NextResponse.json({ 
-        ok: true, 
+      return NextResponse.json({
+        ok: true,
         message: 'No chargebacks in cache to filter',
         removedCount: 0,
         remainingCount: records.length,
@@ -65,11 +69,11 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
 
     // Step 4: Extract bankAccountNumber or cardNumber from original transactions
     const chargebackAccounts = new Set<string>()
-    
+
     for (const tx of originalTransactions) {
       // Get bankAccountNumber (this is the IBAN for SEPA transactions)
       const account = tx.bankAccountNumber || tx.bank_account_number || tx.cardNumber || tx.card_number
-      
+
       if (account && typeof account === 'string') {
         // Normalize (remove spaces, uppercase)
         const normalized = account.replace(/\s+/g, '').toUpperCase()
@@ -80,18 +84,18 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
     }
 
     console.log(`[Filter Chargebacks] Extracted ${chargebackAccounts.size} unique account numbers with chargebacks`)
-    
+
     // Debug: Show sample accounts
     if (chargebackAccounts.size > 0) {
-      const sampleAccounts = Array.from(chargebackAccounts).slice(0, 3).map(acc => 
+      const sampleAccounts = Array.from(chargebackAccounts).slice(0, 3).map(acc =>
         acc.length > 8 ? `${acc.substring(0, 4)}****${acc.substring(acc.length - 4)}` : `${acc.substring(0, 2)}****`
       )
       console.log(`[Filter Chargebacks] Sample account numbers:`, sampleAccounts)
     }
 
     if (chargebackAccounts.size === 0) {
-      return NextResponse.json({ 
-        ok: true, 
+      return NextResponse.json({
+        ok: true,
         message: 'No account numbers found in chargeback data',
         removedCount: 0,
         remainingCount: records.length,
@@ -100,20 +104,20 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
 
     // Step 5: Find IBAN field in CSV records (case-insensitive)
     const possibleCsvIbanFields = [
-      'iban', 'Iban', 'IBAN', 
+      'iban', 'Iban', 'IBAN',
       'customer_iban', 'customeriban', 'CustomerIban',
       'billing_iban', 'billingiban',
       'account', 'Account', 'ACCOUNT'
     ]
     let ibanFieldName = ''
-    
+
     // Check first record for IBAN field (case-insensitive)
     if (records.length > 0) {
       const firstRecord = records[0]
       const keys = Object.keys(firstRecord)
-      
+
       console.log(`[Filter Chargebacks] CSV has fields:`, keys)
-      
+
       // Try to find IBAN field (case-insensitive)
       for (const field of possibleCsvIbanFields) {
         const foundKey = keys.find(k => k.toLowerCase() === field.toLowerCase())
@@ -122,7 +126,7 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
           break
         }
       }
-      
+
       // If still not found, look for any field containing 'iban'
       if (!ibanFieldName) {
         const ibanKey = keys.find(k => k.toLowerCase().includes('iban'))
@@ -133,8 +137,8 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
     }
 
     if (!ibanFieldName) {
-      return NextResponse.json({ 
-        error: `No IBAN field found in CSV. Available fields: ${Object.keys(records[0] || {}).join(', ')}` 
+      return NextResponse.json({
+        error: `No IBAN field found in CSV. Available fields: ${Object.keys(records[0] || {}).join(', ')}`
       }, { status: 400 })
     }
 
@@ -147,7 +151,7 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
     let removedCount = 0
 
     console.log(`[Filter Chargebacks] Starting to filter ${records.length} records...`)
-    
+
     // Sample first 3 CSV IBANs for debugging
     if (records.length > 0) {
       const sampleCsvIbans = records.slice(0, 3).map(r => {
@@ -190,6 +194,8 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
           records: remainingRecords,
           rows: remainingRows,
           recordCount: remainingRecords.length,
+          filteredRecords: removedRecords, // Save filtered records
+          filteredRows: removedRecords.map((_, idx) => rows.find(r => r === removedRecords[idx]) || {}), // Best effort to map back to rows if needed, or just save removedRecords if rows structure matches
           updatedAt: new Date(),
           chargebackFilteredAt: new Date(),
           chargebackFilterStats: {
@@ -212,8 +218,8 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
     })
   } catch (err: any) {
     console.error('[Filter Chargebacks] Error:', err)
-    return NextResponse.json({ 
-      error: err?.message || 'Failed to filter chargebacks' 
+    return NextResponse.json({
+      error: err?.message || 'Failed to filter chargebacks'
     }, { status: 500 })
   }
 }

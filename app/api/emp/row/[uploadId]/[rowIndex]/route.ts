@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { ObjectId } from 'mongodb'
 import { getMongoClient, getDbName } from '@/lib/db'
-import { mapRecordToSddSale, type FieldMapping, stripRetrySuffix, buildRetryTransactionId } from '@/lib/emp'
+import { mapRecordToSddSale, type FieldMapping, stripRetrySuffix, buildRetryTransactionId, type CompanyConfig } from '@/lib/emp'
 import { submitSddSale, maskIban, type SddSaleResponse } from '@/lib/emerchantpay'
 import { reconcileTransaction } from '@/lib/emerchantpay-reconcile'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -29,6 +30,8 @@ function isDuplicateTransactionError(res?: SddSaleResponse | null, err?: any): b
 
 export async function POST(_req: Request, ctx: { params: { uploadId: string; rowIndex: string } }) {
   try {
+    await requireWriteAccess()
+
     const uploadId = ctx.params.uploadId
     const rowIndex = parseInt(ctx.params.rowIndex, 10)
     if (Number.isNaN(rowIndex)) return NextResponse.json({ error: 'Invalid row index' }, { status: 400 })
@@ -37,13 +40,29 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
     const db = client.db(getDbName())
     const uploads = db.collection('uploads')
     const settings = db.collection('settings')
-    
+    const accounts = db.collection('accounts')
+
     const doc = await uploads.findOne({ _id: new ObjectId(uploadId) }) as any
     if (!doc) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     // Load field mapping
-    const settingsDoc = await settings.findOne({ _id: 'field-mapping' })
+    const settingsDoc = await settings.findOne({ _id: 'field-mapping' as any })
     const customMapping = settingsDoc?.mapping as FieldMapping | null
+
+    // Fetch account settings if assigned
+    let companyConfig: CompanyConfig | null = null
+    if (doc.accountId) {
+      const account = await accounts.findOne({ _id: new ObjectId(doc.accountId) }) as any
+      if (account) {
+        companyConfig = {
+          name: account.name,
+          contactEmail: account.contactEmail,
+          returnUrls: account.returnUrls,
+          dynamicDescriptor: account.dynamicDescriptor,
+          fallbackDescription: account.fallbackDescription,
+        }
+      }
+    }
 
     const records: Record<string, string>[] = doc.records || []
     if (!records[rowIndex]) return NextResponse.json({ error: 'Row not found' }, { status: 404 })
@@ -54,7 +73,7 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
 
     let request
     try {
-      request = mapRecordToSddSale(records[rowIndex], rowIndex, customMapping, doc.originalFilename || doc.filename)
+      request = mapRecordToSddSale(records[rowIndex], rowIndex, customMapping, doc.originalFilename || doc.filename, companyConfig)
     } catch (validationError: any) {
       rows[rowIndex].status = 'error'
       rows[rowIndex].emp = { message: validationError?.message || 'Validation failed' }
@@ -97,7 +116,7 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
           iban: maskIban(currentRequest.iban),
           retryCount,
         })
-      } catch {}
+      } catch { }
 
       try {
         finalResponse = await submitSddSale(currentRequest)
@@ -147,7 +166,7 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
               transactionId: transactionIdForAttempt,
               status: reconciliation.status,
             })
-          } catch {}
+          } catch { }
           break
         }
 
@@ -163,7 +182,7 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
             nextTransactionId: buildRetryTransactionId(baseTransactionId, retryCount),
             duplicateAttempts,
           })
-        } catch {}
+        } catch { }
 
         if (duplicateAttempts > maxDuplicateRetries) {
           const message = finalResponse?.message || finalError?.message || 'Duplicate transaction_id after retries'
@@ -178,7 +197,7 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
               transactionId: transactionIdForAttempt,
               duplicateAttempts,
             })
-          } catch {}
+          } catch { }
           break
         }
 
@@ -188,7 +207,7 @@ export async function POST(_req: Request, ctx: { params: { uploadId: string; row
       const message = finalResponse?.message || finalError?.message || 'Submit failed'
       try {
         console.error('[EMP] submit single error', { rowIndex, transactionId: currentRequest.transactionId, message })
-      } catch {}
+      } catch { }
       rowState.status = 'error'
       rowState.emp = {
         message,

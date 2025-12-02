@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EditRowDialog } from '@/components/emp/edit-row-dialog'
@@ -16,10 +16,14 @@ type Props = {
   rowErrors?: Array<string | undefined>
   uploadId?: string
   onRowEdited?: () => void
+  canEdit?: boolean
+  canSyncRow?: boolean
 }
 
-export function TableClient({ title, subtitle, headers, records, rowStatuses, rowErrors, uploadId, onRowEdited }: Props) {
+export function TableClient({ title, subtitle, headers, records, rowStatuses, rowErrors, uploadId, onRowEdited, canEdit = true, canSyncRow = true }: Props) {
   const [query, setQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 50
 
   const filtered = useMemo(() => {
     if (!query) return records.map((r, i) => ({ record: r, originalIndex: i }))
@@ -28,6 +32,20 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
       .map((r, i) => ({ record: r, originalIndex: i }))
       .filter(({ record: row }) => headers.some((h) => (row[h] || '').toLowerCase().includes(q)))
   }, [records, query, headers])
+
+  const totalPages = Math.ceil(filtered.length / itemsPerPage)
+  const paginatedRecords = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage
+    return filtered.slice(start, start + itemsPerPage)
+  }, [filtered, currentPage])
+
+  // Reset page when query changes
+  useMemo(() => {
+    setCurrentPage(1)
+  }, [query])
+
+  // State for editing
+  const [editingRow, setEditingRow] = useState<{ index: number; record: Record<string, string> } | null>(null)
 
   function exportCsv() {
     const delimiter = ','
@@ -42,7 +60,7 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
     a.click()
     URL.revokeObjectURL(url)
   }
-  
+
   function getRowClassName(status?: 'pending' | 'approved' | 'error'): string {
     if (status === 'approved') {
       return 'bg-green-50/50 dark:bg-green-950/20 border-l-2 border-l-green-500'
@@ -71,30 +89,30 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
         </div>
       </div>
 
-      <div className="overflow-auto max-h-[70vh] rounded-md border">
+      <div className="overflow-auto max-h-[70vh] rounded-md border bg-background">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-muted/60 backdrop-blur supports-[backdrop-filter]:bg-muted/40">
+          <thead className="sticky top-0 z-20">
+            <tr className="bg-muted border-b">
               {headers.map((h, i) => (
                 <th
                   key={h}
                   className={
-                    "py-2 px-3 text-left border-b font-medium " +
-                    (i === 0 ? 'sticky left-0 bg-muted/60 backdrop-blur supports-[backdrop-filter]:bg-muted/40 z-10' : '')
+                    "py-2 px-3 text-left font-medium whitespace-nowrap " +
+                    (i === 0 ? 'sticky left-0 z-20 bg-muted border-r' : '')
                   }
                 >
                   {h}
                 </th>
               ))}
-              <th className="py-2 px-3 text-right border-b font-medium sticky right-0 bg-muted/60 backdrop-blur supports-[backdrop-filter]:bg-muted/40 z-10">Actions</th>
+              <th className="py-2 px-3 text-right font-medium sticky right-0 z-20 bg-muted border-l">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.slice(0, 2000).map(({ record: row, originalIndex }, i) => {
+            {paginatedRecords.map(({ record: row, originalIndex }, i) => {
               const status = rowStatuses?.[originalIndex]
               const errorMsg = rowErrors?.[originalIndex]
               const rowClass = getRowClassName(status)
-              
+
               const handleResubmit = async () => {
                 try {
                   toast.info('Re-submitting row...')
@@ -112,11 +130,11 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
                 if (!confirm('Are you sure you want to delete this row? This action cannot be undone.')) {
                   return
                 }
-                
+
                 try {
                   toast.info('Deleting row...')
-                  const res = await fetch(`/api/emp/uploads/delete-row/${uploadId}/${originalIndex}`, { 
-                    method: 'DELETE' 
+                  const res = await fetch(`/api/emp/uploads/delete-row/${uploadId}/${originalIndex}`, {
+                    method: 'DELETE'
                   })
                   const data = await res.json()
                   if (!res.ok) throw new Error(data?.error || 'Delete failed')
@@ -126,57 +144,75 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
                   toast.error(err?.message || 'Delete failed')
                 }
               }
-              
+
+              // Determine background color for sticky columns based on status
+              // MUST use solid colors (no opacity) to prevent transparency issues
+              let stickyClass = 'bg-background'
+              if (status === 'approved') stickyClass = 'bg-[#f0fdf4] dark:bg-[#14532d]' // green-50 / green-900
+              else if (status === 'error') stickyClass = 'bg-[#fef2f2] dark:bg-[#7f1d1d]' // red-50 / red-900
+              else stickyClass = 'bg-background'
+
               return (
-                <>
-                  <tr key={i} className={rowClass}>
+                <React.Fragment key={originalIndex}>
+                  <tr className={`${rowClass} hover:bg-muted/50 transition-colors`}>
                     {headers.map((h, j) => (
                       <td
                         key={h}
                         className={
-                          "py-1.5 px-3 whitespace-pre-wrap break-words align-top border-b max-w-[28rem] " +
-                          (j === 0 ? 'sticky left-0 z-10 ' + (status === 'approved' ? 'bg-green-50/50 dark:bg-green-950/20' : status === 'error' ? 'bg-red-50/50 dark:bg-red-950/20' : 'bg-muted/20') : '')
+                          "py-1 px-3 whitespace-nowrap border-b max-w-[20rem] overflow-hidden text-ellipsis " +
+                          (j === 0 ? `sticky left-0 z-10 border-r font-medium ${stickyClass}` : '')
                         }
                       >
                         {row[h] ?? ''}
                       </td>
                     ))}
-                    <td className="py-1.5 px-3 text-right border-b sticky right-0 z-10 bg-white dark:bg-background shadow-[-4px_0_8px_rgba(0,0,0,0.05)]">
+                    <td className={`py-1 px-2 text-right border-b sticky right-0 z-10 border-l ${stickyClass}`}>
                       <div className="flex items-center justify-end gap-1">
                         {uploadId && (
                           <>
-                            <EditRowDialog
-                              uploadId={uploadId}
-                              rowIndex={originalIndex}
-                              record={row}
-                              headers={headers}
-                              onSaved={onRowEdited}
-                            />
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="gap-1.5"
-                              onClick={handleResubmit}
-                            >
-                              <RefreshCw className="h-3 w-3" />
-                              Sync
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
-                              onClick={handleDelete}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                              Delete
-                            </Button>
+                            {canEdit && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                title="Edit"
+                                onClick={() => setEditingRow({ index: originalIndex, record: row })}
+                              >
+                                <span className="sr-only">Edit</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+                              </Button>
+                            )}
+                            {canSyncRow && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                title="Sync"
+                                onClick={handleResubmit}
+                              >
+                                <span className="sr-only">Sync</span>
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {canEdit && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
+                                title="Delete"
+                                onClick={handleDelete}
+                              >
+                                <span className="sr-only">Delete</span>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                           </>
                         )}
                       </div>
                     </td>
                   </tr>
                   {errorMsg && (
-                    <tr key={`${i}-error`}>
+                    <tr>
                       <td colSpan={headers.length + 1} className="py-2 px-3 bg-red-50 dark:bg-red-950/20 border-b border-l-2 border-l-red-500">
                         <div className="flex items-start gap-2 text-xs text-red-700 dark:text-red-300">
                           <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
@@ -186,19 +222,59 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               )
             })}
             {filtered.length === 0 && (
               <tr>
-                <td className="py-6 text-center text-muted-foreground" colSpan={headers.length || 1}>No results</td>
+                <td className="py-6 text-center text-muted-foreground" colSpan={headers.length + 1}>No results</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {filtered.length > 2000 && (
-        <p className="text-xs text-muted-foreground">Showing first 2000 rows</p>
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-2">
+          <div className="text-sm text-muted-foreground">
+            Page {currentPage} of {totalPages} ({filtered.length} total rows)
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Lifted Edit Dialog */}
+      {editingRow && uploadId && (
+        <EditRowDialog
+          open={!!editingRow}
+          onOpenChange={(open) => !open && setEditingRow(null)}
+          uploadId={uploadId}
+          rowIndex={editingRow.index}
+          record={editingRow.record}
+          headers={headers}
+          onSaved={() => {
+            setEditingRow(null)
+            if (onRowEdited) onRowEdited()
+          }}
+        />
       )}
     </div>
   )

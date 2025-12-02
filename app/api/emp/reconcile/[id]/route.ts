@@ -4,6 +4,7 @@ export const revalidate = 0
 import { compareWithEmp } from '@/lib/emerchantpay-reconcile'
 import { getMongoClient, getDbName } from '@/lib/db'
 import { ObjectId } from 'mongodb'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -11,12 +12,15 @@ export const runtime = 'nodejs'
  * POST /api/emp/reconcile/[id]
  * Reconciles an upload by fetching all transactions from EMP and comparing with CSV
  * Returns a report of what's approved, pending, error, or missing
+ * Only Super Owner can reconcile (hits external emerchantpay API)
  */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireWriteAccess()
+    
     const { id } = await params
     
     if (!ObjectId.isValid(id)) {

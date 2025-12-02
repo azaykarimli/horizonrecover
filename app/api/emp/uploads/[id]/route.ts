@@ -3,11 +3,14 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 import { getMongoClient, getDbName } from '@/lib/db'
 import { ObjectId } from 'mongodb'
+import { requireSession } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
 export async function GET(_req: Request, ctx: { params: { id: string } }) {
   try {
+    await requireSession()
+    
     const { id } = ctx.params
     const client = await getMongoClient()
     const db = client.db(getDbName())

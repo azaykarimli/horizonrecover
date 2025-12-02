@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// Routes that belong to the EMP admin app
 const EMP_PREFIX = '/emp'
 const LOGIN_PATH = '/emp/login'
 
@@ -8,30 +7,15 @@ function isEmpHost(hostname: string): boolean {
   return hostname.startsWith('emp.') || hostname === 'emp.melinux.net'
 }
 
-async function verifySessionCookie(req: NextRequest): Promise<boolean> {
-  const cookie = req.cookies.get('emp_session')?.value
-  if (!cookie) return false
-  const secret = process.env.EMP_SESSION_SECRET || 'dev-secret'
-  try {
-    const [username, ts, sig] = cookie.split('.')
-    if (!username || !ts || !sig) return false
-    const enc = new TextEncoder()
-    const key = await crypto.subtle.importKey(
-      'raw',
-      enc.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    )
-    const data = `${username}.${ts}`
-    const signature = await crypto.subtle.sign('HMAC', key, enc.encode(data))
-    const expected = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    // Optional: expire after 24h
-    const isExpired = Date.now() - Number(ts) > 24 * 60 * 60 * 1000
-    return !isExpired && expected === sig
-  } catch {
-    return false
+function hasValidSessionCookieFormat(req: NextRequest): boolean {
+  const token = req.cookies.get('emp_session')?.value
+  if (!token) return false
+  
+  if (token.length === 64 && /^[a-f0-9]+$/.test(token)) {
+    return true
   }
+  
+  return false
 }
 
 export async function middleware(req: NextRequest) {
@@ -48,10 +32,11 @@ export async function middleware(req: NextRequest) {
   const publicEmpPaths = [LOGIN_PATH, '/emp/success', '/emp/failure', '/emp/pending', '/emp/cancel']
   const isPublicUi = publicEmpPaths.includes(path) || (onEmpHost && publicEmpPaths.includes(`/emp${path}`))
   const isAuthApi = path.startsWith('/api/emp/auth/') || (onEmpHost && path.startsWith('/api/emp/auth/'))
+  const isSeedApi = path === '/api/emp/admin/seed'
 
-  if (!isPublicUi && !isAuthApi && (targetsEmpApi || targetsEmpUi)) {
-    const ok = await verifySessionCookie(req)
-    if (!ok) {
+  if (!isPublicUi && !isAuthApi && !isSeedApi && (targetsEmpApi || targetsEmpUi)) {
+    const hasToken = hasValidSessionCookieFormat(req)
+    if (!hasToken) {
       if (targetsEmpUi) {
         // redirect to login for UI
         url.pathname = LOGIN_PATH

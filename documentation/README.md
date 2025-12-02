@@ -158,6 +158,10 @@ See `/.tools/README.md` for full documentation.
 
 ## 📝 Changelog
 
+### Version 2.1 (November 2025)
+- **Vercel Cron Jobs** - Automatic analytics refresh every 2 hours
+- Improved refresh button with lock mechanism
+
 ### Version 2.0 (November 2025)
 - Added comprehensive documentation
 - Multi-company support (BestWin, Grand Luck, MeLinux)

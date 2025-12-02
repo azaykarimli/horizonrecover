@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getMongoClient, getDbName } from '@/lib/db'
+import { requireSession } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,6 +17,8 @@ export const revalidate = 0
  */
 export async function GET(req: Request) {
   try {
+    await requireSession()
+    
     const { searchParams } = new URL(req.url)
     const filename = searchParams.get('filename')
     const type = searchParams.get('type') || 'chargebacks' // 'chargebacks' or 'clean'

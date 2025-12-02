@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +23,9 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { ChevronDown, ChevronRight } from 'lucide-react'
+import { TruncatedFilename } from '@/components/emp/truncated-filename'
+import { useIsMobile } from '@/hooks/use-breakpoint'
+import { ResponsiveTable } from '@/components/emp/responsive-table'
 
 interface BatchChargeback {
   uploadId: string
@@ -61,8 +64,20 @@ export default function BatchChargebacksPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set())
+  const isMobile = useIsMobile()
+
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const loadData = async () => {
+    // Cancel previous request if it exists
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    // Create new controller
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     setLoading(true)
     try {
       // Add timestamp to prevent caching
@@ -72,37 +87,59 @@ export default function BatchChargebacksPage() {
         headers: {
           'Cache-Control': 'no-cache',
         },
+        signal: controller.signal
       })
       const json = await response.json()
-      setData(json)
-      console.log('[Batch Chargebacks UI] Data loaded at:', json.timestamp || 'no timestamp')
-      console.log('[Batch Chargebacks UI] Total chargebacks (matched):', json.totalChargebacks)
-      console.log('[Batch Chargebacks UI] Total in DB:', json.totalChargebacksInDb)
-      console.log('[Batch Chargebacks UI] Unmatched:', json.unmatchedChargebacks)
-      
-      if (json.unmatchedChargebacks && json.unmatchedChargebacks > 0) {
-        console.warn(`⚠️ ${json.unmatchedChargebacks} chargebacks could not be matched to any batch`)
+
+      // Only update state if this is the latest request
+      if (!controller.signal.aborted) {
+        setData(json)
+        console.log('[Batch Chargebacks UI] Data loaded at:', json.timestamp || 'no timestamp')
+
+        if (json.unmatchedChargebacks && json.unmatchedChargebacks > 0) {
+          console.warn(`⚠️ ${json.unmatchedChargebacks} chargebacks could not be matched to any batch`)
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Ignore abort errors
+      if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+        return
+      }
       console.error('Failed to load batch chargebacks:', error)
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
     loadData()
+    return () => {
+      try {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort()
+        }
+      } catch (e) {
+        // Ignore abort errors during cleanup
+      }
+    }
   }, [])
 
   const filteredBatches = useMemo(() => {
     if (!data?.batches) return []
-    
-    const query = searchQuery.toLowerCase().trim()
-    if (!query) return data.batches
 
-    return data.batches.filter(batch => 
-      batch.filename.toLowerCase().includes(query) ||
-      batch.uploadId.toLowerCase().includes(query)
+    const query = searchQuery.toLowerCase().trim()
+    let batches = query
+      ? data.batches.filter(batch =>
+        batch.filename.toLowerCase().includes(query) ||
+        batch.uploadId.toLowerCase().includes(query)
+      )
+      : data.batches
+
+    // Sort by upload date (newest first)
+    return [...batches].sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )
   }, [data, searchQuery])
 
@@ -137,10 +174,12 @@ export default function BatchChargebacksPage() {
   const formatDate = (dateStr: string) => {
     if (!dateStr) return 'N/A'
     try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
+      return new Date(dateStr).toLocaleString('en-US', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
       })
     } catch {
       return dateStr
@@ -163,7 +202,7 @@ export default function BatchChargebacksPage() {
 
     try {
       exportBatchChargebacksPDF({
-        dateRange: 'All cached data',
+        dateRange: 'All Time',
         summary: {
           totalBatches: data.totalBatches,
           totalChargebacks: data.totalChargebacks,
@@ -172,7 +211,7 @@ export default function BatchChargebacksPage() {
         },
         batches: data.batches,
       })
-      
+
       toast.success('PDF report generated successfully')
     } catch (error) {
       console.error('Error generating PDF:', error)
@@ -181,10 +220,10 @@ export default function BatchChargebacksPage() {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 md:p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
               <Link href="/emp/analytics">
@@ -193,21 +232,21 @@ export default function BatchChargebacksPage() {
                 </Button>
               </Link>
               <div>
-                <h1 className="text-3xl font-bold tracking-tight">Batch Chargeback Analysis</h1>
-                <p className="text-muted-foreground">
+                <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Batch Chargeback Analysis</h1>
+                <p className="text-sm md:text-base text-muted-foreground">
                   Track chargebacks by file upload batch
                 </p>
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={handleExportPDF} disabled={loading || !data} variant="outline">
+          <div className="flex gap-2 flex-wrap">
+            <Button onClick={handleExportPDF} disabled={loading || !data} variant="outline" size={isMobile ? "sm" : "default"}>
               <Download className="h-4 w-4 mr-2" />
-              Export PDF
+              {isMobile ? "PDF" : "Export PDF"}
             </Button>
-            <Button onClick={loadData} disabled={loading} variant="outline">
+            <Button onClick={loadData} disabled={loading} variant="outline" size={isMobile ? "sm" : "default"}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
+              {isMobile ? "Sync" : "Refresh"}
             </Button>
           </div>
         </div>
@@ -255,27 +294,27 @@ export default function BatchChargebacksPage() {
             )}
 
             {/* Summary Cards */}
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Batches</CardTitle>
+                  <CardTitle className="text-xs md:text-sm font-medium">Total Batches</CardTitle>
                   <FileText className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{data?.totalBatches || 0}</div>
+                  <div className="text-xl md:text-2xl font-bold">{data?.totalBatches || 0}</div>
                   <p className="text-xs text-muted-foreground">
-                    File uploads analyzed
+                    Showing {data?.batches.length} on this page
                   </p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Affected Batches</CardTitle>
+                  <CardTitle className="text-xs md:text-sm font-medium">Affected Batches</CardTitle>
                   <TrendingDown className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{batchesWithChargebacks.length}</div>
+                  <div className="text-xl md:text-2xl font-bold">{batchesWithChargebacks.length}</div>
                   <p className="text-xs text-muted-foreground">
                     Batches with chargebacks
                   </p>
@@ -284,11 +323,11 @@ export default function BatchChargebacksPage() {
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Chargebacks</CardTitle>
+                  <CardTitle className="text-xs md:text-sm font-medium">Total Chargebacks</CardTitle>
                   <AlertTriangle className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{data?.totalChargebacks || 0}</div>
+                  <div className="text-xl md:text-2xl font-bold">{data?.totalChargebacks || 0}</div>
                   <p className="text-xs text-muted-foreground">
                     Across all batches
                   </p>
@@ -297,11 +336,11 @@ export default function BatchChargebacksPage() {
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Amount</CardTitle>
+                  <CardTitle className="text-xs md:text-sm font-medium">Total Amount</CardTitle>
                   <TrendingDown className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{formatCurrency(totalChargebackAmount)}</div>
+                  <div className="text-xl md:text-2xl font-bold">{formatCurrency(totalChargebackAmount)}</div>
                   <p className="text-xs text-muted-foreground">
                     Chargebacked volume
                   </p>
@@ -372,12 +411,14 @@ export default function BatchChargebacksPage() {
                                 </CollapsibleTrigger>
                               </TableCell>
                               <TableCell className="font-medium">
-                                {batch.filename}
-                                {batch.chargebackCount > 0 && (
-                                  <Badge variant="destructive" className="ml-2">
-                                    {batch.chargebackCount} CB
-                                  </Badge>
-                                )}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <TruncatedFilename filename={batch.filename} maxLength={isMobile ? 20 : 35} />
+                                  {batch.chargebackCount > 0 && (
+                                    <Badge variant="destructive" className="ml-2 shrink-0">
+                                      {batch.chargebackCount} CB
+                                    </Badge>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell>{formatDate(batch.createdAt)}</TableCell>
                               <TableCell className="text-right">{batch.totalRecords.toLocaleString()}</TableCell>
@@ -422,7 +463,7 @@ export default function BatchChargebacksPage() {
                                                   {cb.transactionId}
                                                 </TableCell>
                                                 <TableCell className="font-mono text-xs" title={cb.originalTransactionUniqueId}>
-                                                  {cb.originalTransactionUniqueId.substring(0, 12)}...
+                                                  {cb.originalTransactionUniqueId?.substring(0, 12) || 'N/A'}...
                                                 </TableCell>
                                                 <TableCell>
                                                   <Badge variant="outline">{cb.reasonCode}</Badge>

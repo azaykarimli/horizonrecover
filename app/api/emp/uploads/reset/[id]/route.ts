@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ObjectId } from 'mongodb'
 import { getMongoClient, getDbName } from '@/lib/db'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -9,9 +10,12 @@ export const runtime = 'nodejs'
  * 
  * Resets an upload to allow resubmission with fresh transaction IDs
  * Clears baseTransactionId, retryCount, and status from all rows
+ * Only Super Owner can reset uploads
  */
 export async function POST(_req: Request, ctx: { params: { id: string } }) {
   try {
+    await requireWriteAccess()
+    
     const { id } = ctx.params
 
     const client = await getMongoClient()

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -14,12 +14,23 @@ interface EditRowDialogProps {
   record: Record<string, string>
   headers: string[]
   onSaved?: () => void
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
-export function EditRowDialog({ uploadId, rowIndex, record, headers, onSaved }: EditRowDialogProps) {
-  const [open, setOpen] = useState(false)
+export function EditRowDialog({ uploadId, rowIndex, record, headers, onSaved, open: controlledOpen, onOpenChange: setControlledOpen }: EditRowDialogProps) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const isControlled = controlledOpen !== undefined
+  const open = isControlled ? controlledOpen : internalOpen
+  const setOpen = isControlled ? setControlledOpen! : setInternalOpen
+
   const [editedRecord, setEditedRecord] = useState<Record<string, string>>(record)
   const [saving, setSaving] = useState(false)
+
+  // Update editedRecord when record changes or dialog opens
+  useMemo(() => {
+    setEditedRecord(record)
+  }, [record, open])
 
   const handleSave = async () => {
     setSaving(true)
@@ -46,16 +57,18 @@ export function EditRowDialog({ uploadId, rowIndex, record, headers, onSaved }: 
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => {
-          setEditedRecord(record)
-          setOpen(true)
-        }}
-      >
-        <Pencil className="h-3 w-3" />
-      </Button>
+      {!isControlled && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setEditedRecord(record)
+            setOpen(true)
+          }}
+        >
+          <Pencil className="h-3 w-3" />
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">

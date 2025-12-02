@@ -87,7 +87,7 @@ export function BatchSyncButton({ uploadId, totalRecords, onComplete }: BatchSyn
       className="gap-2"
     >
       <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-      {syncing ? 'Processing bulk submission...' : 'Submit All to Gateway'}
+      {syncing ? 'Syncing...' : 'Sync All to Gateway'}
     </Button>
   )
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ObjectId } from 'mongodb'
 import { getMongoClient, getDbName } from '@/lib/db'
+import { requireSession, canManageUpload } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -8,9 +9,12 @@ export const runtime = 'nodejs'
  * DELETE /api/emp/uploads/delete-row/[uploadId]/[rowIndex]
  * 
  * Deletes a specific row from an upload
+ * Only Super Owner or Owner (if draft) can delete rows
  */
 export async function DELETE(_req: Request, ctx: { params: { uploadId: string; rowIndex: string } }) {
   try {
+    const session = await requireSession()
+
     const uploadId = ctx.params.uploadId
     const rowIndex = parseInt(ctx.params.rowIndex, 10)
 
@@ -25,6 +29,10 @@ export async function DELETE(_req: Request, ctx: { params: { uploadId: string; r
     const doc = await uploads.findOne({ _id: new ObjectId(uploadId) }) as any
     if (!doc) {
       return NextResponse.json({ error: 'Upload not found' }, { status: 404 })
+    }
+
+    if (!canManageUpload(session, doc)) {
+      return NextResponse.json({ error: 'Forbidden: Cannot delete rows from this upload' }, { status: 403 })
     }
 
     const records: Record<string, string>[] = doc.records || []

@@ -4,10 +4,13 @@ import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EditRowDialog } from '@/components/emp/edit-row-dialog'
-import { RefreshCw, AlertCircle, Search, Download, HelpCircle } from 'lucide-react'
+import { RefreshCw, AlertCircle, Search, Download, HelpCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { useAsyncAction } from '@/hooks/use-async-action'
+import { useIsMobile } from '@/hooks/use-breakpoint'
 
 type Props = {
   uploadId?: string
@@ -21,6 +24,7 @@ type Props = {
 export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErrors, onRowEdited }: Props) {
   const [query, setQuery] = useState('')
   const [selectedColumns, setSelectedColumns] = useState<Set<string>>(new Set(headers.slice(0, 10)))
+  const isMobile = useIsMobile()
 
   const filtered = useMemo(() => {
     if (!query) return records.map((r, i) => ({ record: r, originalIndex: i }))
@@ -55,7 +59,22 @@ export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErro
     a.download = `export_${Date.now()}.csv`
     a.click()
     URL.revokeObjectURL(url)
+    toast.success('CSV exported successfully')
   }
+
+  const resubmitAction = useAsyncAction(
+    async ({ uploadId, rowIndex }: { uploadId: string; rowIndex: number }) => {
+      const res = await fetch(`/api/emp/row/${uploadId}/${rowIndex}`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Re-submit failed')
+      return data
+    },
+    {
+      loadingMessage: 'Re-submitting transaction...',
+      successMessage: 'Transaction re-submitted successfully',
+      onSuccess: () => onRowEdited?.(),
+    }
+  )
 
   const getStatusBadge = (status?: 'pending' | 'approved' | 'error') => {
     if (status === 'approved') {
@@ -65,6 +84,138 @@ export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErro
       return <Badge variant="destructive">Error</Badge>
     }
     return <Badge variant="outline" className="bg-gray-100">Pending</Badge>
+  }
+
+  const approvedCount = rowStatuses?.filter(s => s === 'approved').length || 0
+  const errorCount = rowStatuses?.filter(s => s === 'error').length || 0
+  const pendingCount = rowStatuses?.filter(s => s === 'pending' || !s).length || 0
+
+  if (isMobile) {
+    return (
+      <TooltipProvider>
+        <div className="space-y-4">
+          {/* Search and actions bar */}
+          <div className="flex flex-col gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search transactions..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <Button variant="outline" size="sm" onClick={exportCsv} className="gap-2">
+                <Download className="h-4 w-4" />
+                Export
+              </Button>
+
+              {rowStatuses && (
+                <div className="flex gap-2 text-xs">
+                  <Badge variant="outline" className="bg-green-50">
+                    <span className="text-green-700">{approvedCount} ✓</span>
+                  </Badge>
+                  <Badge variant="outline" className="bg-red-50">
+                    <span className="text-red-700">{errorCount} ✗</span>
+                  </Badge>
+                  <Badge variant="outline">
+                    <span className="text-gray-700">{pendingCount} ⏳</span>
+                  </Badge>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Mobile card view */}
+          <div className="space-y-3">
+            {filtered.slice(0, 1000).map(({ record: row, originalIndex }) => {
+              const status = rowStatuses?.[originalIndex]
+              const errorMsg = rowErrors?.[originalIndex]
+              
+              return (
+                <Card key={originalIndex} className={
+                  status === 'approved' ? 'border-green-200 bg-green-50/30' :
+                  status === 'error' ? 'border-red-200 bg-red-50/30' : ''
+                }>
+                  <CardContent className="p-4 space-y-3">
+                    {rowStatuses && (
+                      <div className="flex items-center justify-between pb-2 border-b">
+                        {getStatusBadge(status)}
+                        <span className="text-xs text-muted-foreground">Row {originalIndex + 1}</span>
+                      </div>
+                    )}
+                    
+                    {visibleHeaders.slice(0, 6).map((h) => (
+                      <div key={h} className="flex justify-between items-start gap-2 text-sm">
+                        <span className="font-medium text-muted-foreground min-w-[80px]">
+                          {h}:
+                        </span>
+                        <span className="text-right flex-1 break-words">
+                          {row[h] ?? '-'}
+                        </span>
+                      </div>
+                    ))}
+                    
+                    {errorMsg && (
+                      <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 p-2 rounded">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <span>{errorMsg}</span>
+                      </div>
+                    )}
+                    
+                    {uploadId && (
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t">
+                        <EditRowDialog
+                          uploadId={uploadId}
+                          rowIndex={originalIndex}
+                          record={row}
+                          headers={headers}
+                          onSaved={onRowEdited}
+                        />
+                        {status !== 'approved' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => resubmitAction.execute({ uploadId, rowIndex: originalIndex })}
+                            disabled={resubmitAction.isLoading}
+                            className="gap-1.5"
+                          >
+                            {resubmitAction.isLoading ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
+                            Retry
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+
+          {/* Footer info */}
+          <div className="text-sm text-muted-foreground text-center">
+            {filtered.length === 0 ? (
+              <p>No transactions found</p>
+            ) : (
+              <>
+                <p>Showing {Math.min(filtered.length, 1000)} of {filtered.length} transactions</p>
+                {filtered.length > 1000 && (
+                  <p className="text-yellow-600 dark:text-yellow-400 mt-1">
+                    ⚠️ Use search to find specific transactions
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </TooltipProvider>
+    )
   }
 
   return (
@@ -112,15 +263,15 @@ export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErro
           <div className="flex gap-4 text-sm">
             <div className="flex items-center gap-2">
               <div className="h-3 w-3 rounded-full bg-green-500"></div>
-              <span>{rowStatuses.filter(s => s === 'approved').length} Approved</span>
+              <span>{approvedCount} Approved</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="h-3 w-3 rounded-full bg-red-500"></div>
-              <span>{rowStatuses.filter(s => s === 'error').length} Errors</span>
+              <span>{errorCount} Errors</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="h-3 w-3 rounded-full bg-gray-400"></div>
-              <span>{rowStatuses.filter(s => s === 'pending' || !s).length} Pending</span>
+              <span>{pendingCount} Pending</span>
             </div>
           </div>
         )}
@@ -144,19 +295,6 @@ export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErro
                 {filtered.slice(0, 1000).map(({ record: row, originalIndex }, i) => {
                   const status = rowStatuses?.[originalIndex]
                   const errorMsg = rowErrors?.[originalIndex]
-                  
-                  const handleResubmit = async () => {
-                    try {
-                      toast.info('Re-submitting transaction...')
-                      const res = await fetch(`/api/emp/row/${uploadId}/${originalIndex}`, { method: 'POST' })
-                      const data = await res.json()
-                      if (!res.ok) throw new Error(data?.error || 'Re-submit failed')
-                      toast.success('Transaction re-submitted successfully')
-                      if (onRowEdited) onRowEdited()
-                    } catch (err: any) {
-                      toast.error(err?.message || 'Re-submit failed')
-                    }
-                  }
 
                   return (
                     <>
@@ -193,10 +331,15 @@ export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErro
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={handleResubmit}
+                                      onClick={() => resubmitAction.execute({ uploadId, rowIndex: originalIndex })}
+                                      disabled={resubmitAction.isLoading}
                                       className="gap-1.5"
                                     >
-                                      <RefreshCw className="h-3 w-3" />
+                                      {resubmitAction.isLoading ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <RefreshCw className="h-3 w-3" />
+                                      )}
                                       Retry
                                     </Button>
                                   </TooltipTrigger>
@@ -252,4 +395,3 @@ export function ImprovedTable({ uploadId, headers, records, rowStatuses, rowErro
     </TooltipProvider>
   )
 }
-

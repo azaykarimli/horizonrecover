@@ -4,9 +4,10 @@ export const revalidate = 0
 export const maxDuration = 800 // 800 seconds for bulk processing
 import { getMongoClient, getDbName } from '@/lib/db'
 import { ObjectId } from 'mongodb'
-import { mapRecordToSddSale, type FieldMapping, stripRetrySuffix, buildRetryTransactionId } from '@/lib/emp'
+import { mapRecordToSddSale, type FieldMapping, stripRetrySuffix, buildRetryTransactionId, type CompanyConfig } from '@/lib/emp'
 import { submitSddSale, maskIban, type SddSaleResponse } from '@/lib/emerchantpay'
 import { reconcileTransaction } from '@/lib/emerchantpay-reconcile'
+import { requireWriteAccess } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
@@ -36,30 +37,49 @@ function isDuplicateTransactionError(res?: SddSaleResponse | null, err?: any): b
  * - High concurrency (20 parallel requests)
  * - Progress tracking via periodic DB updates
  * - 800s timeout limit
+ * Only Super Owner can submit to gateway
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const startTime = Date.now()
-  
+
   try {
+    await requireWriteAccess()
+
     const { id } = await ctx.params
 
     const client = await getMongoClient()
     const db = client.db(getDbName())
     const uploads = db.collection('uploads')
     const settings = db.collection('settings')
-    
+    const accounts = db.collection('accounts')
+
     const doc = await uploads.findOne({ _id: new ObjectId(id) }) as any
     if (!doc) {
       return NextResponse.json({ error: 'Upload not found' }, { status: 404 })
     }
-    
+
     if (!doc.records || !Array.isArray(doc.records)) {
       return NextResponse.json({ error: 'Invalid upload: no records found' }, { status: 400 })
     }
-    
+
     // Load field mapping
-    const settingsDoc = await settings.findOne({ _id: 'field-mapping' })
+    const settingsDoc = await settings.findOne({ _id: 'field-mapping' as any })
     const customMapping = settingsDoc?.mapping as FieldMapping | null
+
+    // Fetch account settings if assigned
+    let companyConfig: CompanyConfig | null = null
+    if (doc.accountId) {
+      const account = await accounts.findOne({ _id: new ObjectId(doc.accountId) }) as any
+      if (account) {
+        companyConfig = {
+          name: account.name,
+          contactEmail: account.contactEmail,
+          returnUrls: account.returnUrls,
+          dynamicDescriptor: account.dynamicDescriptor,
+          fallbackDescription: account.fallbackDescription,
+        }
+      }
+    }
 
     const records: Record<string, string>[] = doc.records || []
     if (!Array.isArray(records) || records.length === 0) {
@@ -79,9 +99,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (rowsToProcess.length === 0) {
       const approvedCount = rows.filter((r: any) => r.status === 'approved').length
       const errorCount = rows.filter((r: any) => r.status === 'error').length
-      
-      return NextResponse.json({ 
-        ok: true, 
+
+      return NextResponse.json({
+        ok: true,
         message: 'All records already processed',
         processed: 0,
         total: records.length,
@@ -105,7 +125,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
       let request
       try {
-        request = mapRecordToSddSale(record, rowIndex, customMapping, doc.originalFilename || doc.filename)
+        request = mapRecordToSddSale(record, rowIndex, customMapping, doc.originalFilename || doc.filename, companyConfig)
       } catch (validationError: any) {
         const rowState = rows[rowIndex]
         rowState.status = 'error'
@@ -196,7 +216,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
               nextTransactionId: buildRetryTransactionId(baseTransactionId, retryCount),
               duplicateAttempts,
             })
-          } catch {}
+          } catch { }
 
           if (duplicateAttempts > maxDuplicateRetries) {
             const message = finalResponse?.message || finalError?.message || 'Duplicate transaction_id after retries'
@@ -231,7 +251,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       }
 
       processed++
-      
+
       // Periodic DB update for progress tracking
       const now = Date.now()
       if (now - lastDbUpdate > DB_UPDATE_INTERVAL) {
@@ -239,8 +259,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         await uploads.updateOne({ _id: doc._id }, {
           $set: { rows, updatedAt: new Date() },
         }).catch(err => console.error('[Bulk] DB update error:', err))
-        
-        console.log(`[Bulk] Progress: ${processed}/${rowsToProcess.length} (${Math.round(processed/rowsToProcess.length*100)}%)`)
+
+        console.log(`[Bulk] Progress: ${processed}/${rowsToProcess.length} (${Math.round(processed / rowsToProcess.length * 100)}%)`)
       }
     }
 
@@ -258,21 +278,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const approvedCount = rows.filter((r: any) => r.status === 'approved').length
     const errorCount = rows.filter((r: any) => r.status === 'error').length
     const pendingCount = rows.filter((r: any) => r.status === 'pending').length
-    
-    await uploads.updateOne({ _id: doc._id }, { 
-      $set: { 
-        rows, 
-        approvedCount, 
-        errorCount, 
+
+    await uploads.updateOne({ _id: doc._id }, {
+      $set: {
+        rows,
+        approvedCount,
+        errorCount,
         updatedAt: new Date(),
-      } 
+      }
     })
 
     const runtime = Date.now() - startTime
     console.log(`[Bulk] Complete: ${processed} processed, ${approvedCount} approved, ${errorCount} errors, ${runtime}ms`)
 
-    return NextResponse.json({ 
-      ok: true, 
+    return NextResponse.json({
+      ok: true,
       processed,
       total: records.length,
       approved: approvedCount,

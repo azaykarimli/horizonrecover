@@ -1,26 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireWriteAccess } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
 
 // Helper to build basic auth header
 function getAuthHeader() {
   const username = process.env.EMP_GENESIS_USERNAME
   const password = process.env.EMP_GENESIS_PASSWORD
-  
+
   if (!username || !password) {
     throw new Error('EMP credentials not configured')
   }
-  
+
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
 }
 
 // Helper to get the reporting endpoint
 function getReportingEndpoint() {
   let endpoint = process.env.EMP_GENESIS_ENDPOINT || 'https://staging.gate.emerchantpay.net'
-  
+
   // Ensure the endpoint has a protocol
   if (!/^https?:\/\//i.test(endpoint)) {
     endpoint = 'https://' + endpoint.replace(/^\/\//, '')
   }
-  
+
   // Use the base URL without /process/{token} for reporting APIs
   return endpoint.replace(/\/process.*$/, '')
 }
@@ -65,7 +68,7 @@ export const CHARGEBACK_REASON_CODES: Record<string, string> = {
   '13.7': 'Cancelled Merchandise/Services',
   '13.8': 'Original Credit Transaction Not Accepted',
   '13.9': 'Non-Receipt of Cash or Load Transaction Value',
-  
+
   // Mastercard reason codes
   '4807': 'Warning Bulletin File',
   '4808': 'Authorization-Related Chargeback',
@@ -89,7 +92,7 @@ export const CHARGEBACK_REASON_CODES: Record<string, string> = {
   '4863': 'Cardholder Does Not Recognize—Potential Fraud',
   '4870': 'Chip Liability Shift',
   '4871': 'Chip/PIN Liability Shift',
-  
+
   // American Express reason codes
   'F10': 'Missing Imprint',
   'F14': 'Missing Signature',
@@ -115,7 +118,7 @@ export const CHARGEBACK_REASON_CODES: Record<string, string> = {
   'P08': 'Duplicate Charge',
   'P22': 'Non-Matching Card Number',
   'P23': 'Currency Discrepancy',
-  
+
   // Generic/Common
   'fraud': 'Fraudulent Transaction',
   'duplicate': 'Duplicate Processing',
@@ -153,15 +156,15 @@ export function getReasonDescription(reasonCode: string): string {
 // Helper to parse chargebacks from XML
 function parseChargebacksXML(xml: string, importDateForItems?: string): any[] {
   const chargebacks: any[] = []
-  
+
   // Prefer explicit chargeback_response blocks
   let blocks = xml.match(/<chargeback_response>[\s\S]*?<\/chargeback_response>/g) || []
-  
+
   // Fallback to chargeback_event blocks (alternative schema)
   if (blocks.length === 0) {
     blocks = xml.match(/<chargeback_event>[\s\S]*?<\/chargeback_event>/g) || []
   }
-  
+
   // As a last resort, some reconcile-like feeds might include payment_response with transaction_type=chargeback
   if (blocks.length === 0) {
     const paymentBlocks = xml.match(/<payment_response>[\s\S]*?<\/payment_response>/g) || []
@@ -184,7 +187,7 @@ function parseChargebacksXML(xml: string, importDateForItems?: string): any[] {
     }
     return chargebacks
   }
-  
+
   for (const block of blocks) {
     const reasonCode = parseXMLValue(block, 'reason_code')
     chargebacks.push({
@@ -206,7 +209,7 @@ function parseChargebacksXML(xml: string, importDateForItems?: string): any[] {
       itemSlipNumber: parseXMLValue(block, 'item_slip_number') || '',
     })
   }
-  
+
   return chargebacks
 }
 
@@ -214,9 +217,9 @@ function parseChargebacksXML(xml: string, importDateForItems?: string): any[] {
 export async function fetchChargebacksByDateRange(startDate: string, endDate: string): Promise<any[]> {
   const endpoint = getReportingEndpoint()
   const chargebacksUrl = `${endpoint}/chargebacks/by_date/`
-  
+
   console.log('[Analytics] Fetching chargebacks from:', chargebacksUrl)
-  
+
   // Build list of dates to query (chargebacks endpoint accepts a single import_date per request)
   const dateList: string[] = []
   const start = new Date(startDate)
@@ -225,15 +228,15 @@ export async function fetchChargebacksByDateRange(startDate: string, endDate: st
     dateList.push(d.toISOString().split('T')[0])
   }
   console.log('[Analytics] Import date range:', startDate, 'to', endDate, `(${dateList.length} days)`)
-  
+
   const allChargebacks: any[] = []
-  
+
   // Iterate over each date and fetch all pages
   for (const importDate of dateList) {
     let page = 1
     let totalPages = 1
     console.log(`[Analytics] Fetching chargebacks for ${importDate}`)
-    
+
     while (page <= totalPages) {
       // Build XML request for chargebacks (max 1000 per page)
       const xmlRequest = `<?xml version="1.0" encoding="UTF-8"?>
@@ -242,9 +245,9 @@ export async function fetchChargebacksByDateRange(startDate: string, endDate: st
   <per_page>1000</per_page>
   <page>${page}</page>
 </chargeback_request>`
-      
+
       console.log(`[Analytics] Fetching chargebacks page ${page} for ${importDate}...`)
-      
+
       const response = await fetch(chargebacksUrl, {
         method: 'POST',
         headers: {
@@ -253,13 +256,13 @@ export async function fetchChargebacksByDateRange(startDate: string, endDate: st
         },
         body: xmlRequest,
       })
-      
+
       const xmlResponse = await response.text()
-      
+
       if (page === 1) {
         console.log('[Analytics] Chargebacks Response preview:', xmlResponse.substring(0, 800))
       }
-      
+
       if (!response.ok) {
         console.error('[Analytics] Chargebacks error response:', xmlResponse)
         // If it's a 470 (not found), skip this date
@@ -268,20 +271,20 @@ export async function fetchChargebacksByDateRange(startDate: string, endDate: st
         }
         throw new Error(`Failed to fetch chargebacks for ${importDate}: ${xmlResponse}`)
       }
-      
+
       // Parse pagination info from chargeback_responses attributes
       const totalCount = parseResponsesAttr(xmlResponse, 'chargeback_responses', 'total_count') || 0
       const pagesCount = parseResponsesAttr(xmlResponse, 'chargeback_responses', 'pages_count') || 0
       const perPage = parseResponsesAttr(xmlResponse, 'chargeback_responses', 'per_page') || 1000
-      
+
       console.log(`[Analytics] Chargebacks ${importDate} - page ${page}/${pagesCount}, Total count: ${totalCount}, Per page: ${perPage}`)
-      
+
       // Parse the XML response
       const chargebacks = parseChargebacksXML(xmlResponse, importDate)
       allChargebacks.push(...chargebacks)
-      
+
       console.log(`[Analytics] Parsed ${chargebacks.length} chargebacks from page ${page} (${importDate})`)
-      
+
       // Continue fetching until all pages are retrieved
       if (page < pagesCount) {
         page++
@@ -291,19 +294,22 @@ export async function fetchChargebacksByDateRange(startDate: string, endDate: st
       }
     }
   }
-  
+
   console.log(`[Analytics] Total fetched: ${allChargebacks.length} chargebacks`)
   return allChargebacks
 }
 
 export async function GET(request: NextRequest) {
   try {
+    // Direct API access requires Super Owner - organization filtering only works on cache
+    await requireWriteAccess()
+
     const searchParams = request.nextUrl.searchParams
     const startDateParam = searchParams.get('start_date') || getDefaultStartDate()
     const endDateParam = searchParams.get('end_date') || getDefaultEndDate()
-    
+
     const chargebacks = await fetchChargebacksByDateRange(startDateParam, endDateParam)
-    
+
     return NextResponse.json({
       success: true,
       chargebacks,
@@ -311,7 +317,7 @@ export async function GET(request: NextRequest) {
       startDate: startDateParam,
       endDate: endDateParam,
     })
-    
+
   } catch (error: any) {
     console.error('[Analytics] Error fetching chargebacks:', error)
     return NextResponse.json(
