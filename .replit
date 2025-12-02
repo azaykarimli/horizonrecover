@@ -1,0 +1,13 @@
+[agent]
+expertMode = true
+
+[userenv]
+
+[userenv.shared]
+SMTP_HOST = "smtp.hostinger.com"
+SMTP_PORT = "465"
+SMTP_USER = "test@melinux.net"
+SMTP_FROM = "Test <info@test.net>"
+CONTACT_TO = "info@test.net"
+MONGODB_DB = "emp_admin"
+CRON_SECRET = "AanfiBM5tn"
