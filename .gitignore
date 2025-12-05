@@ -1,0 +1,62 @@
+node_modules
+.local
+.next
+.replit
+
+
+# ---------------------------------------
+# Node & pnpm
+# ---------------------------------------
+node_modules/
+.pnpm-store/
+.bun-install/
+.npm/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------------------------------------
+# Next.js build output
+# ---------------------------------------
+.next/
+out/
+dist/
+.next/cache/
+.next/static/
+
+# ---------------------------------------
+# Environment files
+# ---------------------------------------
+.env
+.env.*          # (like .env.local, .env.production)
+!.env.example    # keep template if needed
+.env.local
+
+
+# ---------------------------------------
+# Logs
+# ---------------------------------------
+logs
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# ---------------------------------------
+# OS / Editor specific
+# ---------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.iml
+
+# ---------------------------------------
+# Other
+# ---------------------------------------
+coverage/
+storybook-static/
+*.tsbuildinfo
