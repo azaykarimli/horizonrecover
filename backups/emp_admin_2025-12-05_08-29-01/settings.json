@@ -1,0 +1,72 @@
+[
+  {
+    "_id": "field-mapping",
+    "mapping": {
+      "amount": [
+        "ProduktPreis",
+        "produktpreis",
+        "amount"
+      ],
+      "currency": [
+        "Curr",
+        "currency"
+      ],
+      "usage": [
+        "Usage",
+        "usage"
+      ],
+      "firstName": [
+        "Given",
+        "first_name",
+        "given"
+      ],
+      "lastName": [
+        "Family",
+        "last_name",
+        "family"
+      ],
+      "address1": [
+        "Street",
+        "address1",
+        "street"
+      ],
+      "zipCode": [
+        "Zip",
+        "zip_code",
+        "zip"
+      ],
+      "city": [
+        "City",
+        "city"
+      ],
+      "country": [
+        "CustomerCountry",
+        "country",
+        "accountcountry"
+      ],
+      "email": [
+        "Email",
+        "customer_email",
+        "email"
+      ],
+      "iban": [
+        "Iban",
+        "iban"
+      ],
+      "remoteIp": [
+        "IP",
+        "remote_ip",
+        "ip"
+      ],
+      "shopperId": [
+        "ShopperId",
+        "shopperid"
+      ],
+      "dueDate": [
+        "DueDate",
+        "duedate"
+      ]
+    },
+    "updatedAt": "2025-10-16T17:18:09.514Z"
+  }
+]

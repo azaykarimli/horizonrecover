@@ -1,0 +1,42 @@
+{
+  "timestamp": "2025-12-05_08-29-01",
+  "sourceDb": "emp_admin",
+  "collections": [
+    {
+      "name": "users",
+      "count": 4,
+      "backupFile": "users.json"
+    },
+    {
+      "name": "agencies",
+      "count": 2,
+      "backupFile": "agencies.json"
+    },
+    {
+      "name": "accounts",
+      "count": 2,
+      "backupFile": "accounts.json"
+    },
+    {
+      "name": "sessions",
+      "count": 4,
+      "backupFile": "sessions.json"
+    },
+    {
+      "name": "settings",
+      "count": 1,
+      "backupFile": "settings.json"
+    },
+    {
+      "name": "emp_reconcile_transactions",
+      "count": 5260,
+      "backupFile": "emp_reconcile_transactions.json"
+    },
+    {
+      "name": "emp_chargebacks",
+      "count": 3,
+      "backupFile": "emp_chargebacks.json"
+    }
+  ],
+  "totalDocuments": 5276
+}

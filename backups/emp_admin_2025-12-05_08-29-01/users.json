@@ -1,0 +1,54 @@
+[
+  {
+    "_id": "69287c3b0bdd638cf45ceea1",
+    "email": "admin@admin.net",
+    "passwordHash": "$2b$12$wM3jJZUOD/ANozi995f3HecxsTk4ZqHkcxOBrAzzJn1Is/ccTOuSG",
+    "name": "Super Owner",
+    "role": "superOwner",
+    "agencyId": null,
+    "accountId": null,
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:43.060Z",
+    "updatedAt": "2025-11-27T16:28:43.060Z",
+    "lastLoginAt": "2025-12-05T07:24:55.720Z"
+  },
+  {
+    "_id": "69287c3e0bdd638cf45ceea5",
+    "email": "agency1@agency.com",
+    "passwordHash": "$2b$12$wM3jJZUOD/ANozi995f3HecxsTk4ZqHkcxOBrAzzJn1Is/ccTOuSG",
+    "name": "Agency1 Admin",
+    "role": "agencyAdmin",
+    "agencyId": "69287c3c0bdd638cf45ceea2",
+    "accountId": null,
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:45.893Z",
+    "updatedAt": "2025-11-27T16:28:45.893Z",
+    "lastLoginAt": "2025-11-27T18:18:11.084Z"
+  },
+  {
+    "_id": "69287c3f0bdd638cf45ceea6",
+    "email": "account1@account.com",
+    "passwordHash": "$2b$12$wM3jJZUOD/ANozi995f3HecxsTk4ZqHkcxOBrAzzJn1Is/ccTOuSG",
+    "name": "Account1 User",
+    "role": "accountAdmin",
+    "agencyId": "69287c3c0bdd638cf45ceea2",
+    "accountId": "69287c3c0bdd638cf45ceea3",
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:46.989Z",
+    "updatedAt": "2025-11-27T16:28:46.989Z",
+    "lastLoginAt": "2025-11-27T18:18:53.382Z"
+  },
+  {
+    "_id": "69287c400bdd638cf45ceea7",
+    "email": "account2@account.com",
+    "passwordHash": "$2b$12$wM3jJZUOD/ANozi995f3HecxsTk4ZqHkcxOBrAzzJn1Is/ccTOuSG",
+    "name": "Account2 User",
+    "role": "accountAdmin",
+    "agencyId": "69287c3c0bdd638cf45ceea2",
+    "accountId": "69287c3d0bdd638cf45ceea4",
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:47.936Z",
+    "updatedAt": "2025-11-27T16:28:47.936Z",
+    "lastLoginAt": "2025-11-27T17:55:18.449Z"
+  }
+]

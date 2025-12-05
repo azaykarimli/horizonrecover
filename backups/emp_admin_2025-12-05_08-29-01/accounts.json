@@ -1,0 +1,22 @@
+[
+  {
+    "_id": "69287c3c0bdd638cf45ceea3",
+    "name": "Account2",
+    "slug": "account2",
+    "agencyId": "69287c3c0bdd638cf45ceea2",
+    "genesisCredentials": null,
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:44.722Z",
+    "updatedAt": "2025-11-27T16:28:44.722Z"
+  },
+  {
+    "_id": "69287c3d0bdd638cf45ceea4",
+    "name": "Account1",
+    "slug": "account1",
+    "agencyId": "69287c3c0bdd638cf45ceea2",
+    "genesisCredentials": null,
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:45.334Z",
+    "updatedAt": "2025-11-27T16:28:45.334Z"
+  }
+]

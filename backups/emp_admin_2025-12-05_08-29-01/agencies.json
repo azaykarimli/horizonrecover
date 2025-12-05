@@ -1,0 +1,18 @@
+[
+  {
+    "_id": "69287c3c0bdd638cf45ceea2",
+    "name": "Agency1",
+    "slug": "agency1",
+    "status": "active",
+    "createdAt": "2025-11-27T16:28:44.141Z",
+    "updatedAt": "2025-11-27T16:28:44.141Z"
+  },
+  {
+    "_id": "6928a592700e72b0e259eaf5",
+    "name": "Agency2",
+    "slug": "agency2",
+    "status": "active",
+    "createdAt": "2025-11-27T19:25:06.399Z",
+    "updatedAt": "2025-11-27T19:25:06.399Z"
+  }
+]

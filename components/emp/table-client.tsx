@@ -118,10 +118,14 @@ export function TableClient({ title, subtitle, headers, records, rowStatuses, ro
                   toast.info('Re-submitting row...')
                   const res = await fetch(`/api/emp/row/${uploadId}/${originalIndex}`, { method: 'POST' })
                   const data = await res.json()
-                  if (!res.ok) throw new Error(data?.error || 'Re-submit failed')
+                  if (!res.ok) {
+                    console.error('[Resubmit Error]', { status: res.status, data, uploadId, rowIndex: originalIndex })
+                    throw new Error(data?.error || 'Re-submit failed')
+                  }
                   toast.success('Row re-submitted successfully')
                   if (onRowEdited) onRowEdited()
                 } catch (err: any) {
+                  console.error('[Resubmit Failed]', err)
                   toast.error(err?.message || 'Re-submit failed')
                 }
               }
